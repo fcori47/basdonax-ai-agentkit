@@ -43,11 +43,13 @@ RUN pip install --no-cache-dir -r requirements-produccion.txt
 
 COPY src/ ./src/
 COPY prompts/ ./prompts/
-COPY webhook_chatwoot.py bot_telegram.py ./
+COPY webhook_chatwoot.py bot_telegram.py probar_mail.py ./
 
-# Sin esto corre como root sin necesidad: el servidor no escribe nada en
-# disco (la memoria va a Postgres).
-RUN useradd --create-home agente && chown -R agente:agente /app
+# Sin esto corre como root sin necesidad. Y el usuario es dueño solo de
+# datos/ (el SQLite, si alguien lo corre en modo test): el código y el
+# prompt quedan de solo lectura para el proceso, así que ni él ni alguien
+# que lo engañe puede reescribirlos.
+RUN useradd --create-home agente && mkdir -p /app/datos && chown -R agente:agente /app/datos
 USER agente
 
 # El puerto donde escucha. Coolify lee este número para saber a dónde

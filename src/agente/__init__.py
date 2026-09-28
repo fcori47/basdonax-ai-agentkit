@@ -8,7 +8,7 @@ from .config import Config, ErrorDeConfiguracion, proveedores_disponibles
 from .modelos import crear_modelo
 from .respuesta import partir_respuesta
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 __all__ = [
     "Agente",

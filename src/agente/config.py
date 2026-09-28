@@ -6,7 +6,7 @@ Todo sale del archivo .env. Nada de credenciales escritas en el código.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -42,21 +42,23 @@ class ErrorDeConfiguracion(Exception):
 class Config:
     proveedor: str
     modelo: str
-    api_key: str
+    # Las claves con repr=False: si alguien imprime la configuración para
+    # depurar, no quedan escritas en la pantalla ni en los registros.
+    api_key: str = field(repr=False)
     max_tokens: int
     memoria_mensajes: int
     prompt_sistema: Path
     modo: str = "test"
     cache: bool = True
     sqlite_ruta: str = "datos/conversaciones.db"
-    postgres_dsn: str = ""
+    postgres_dsn: str = field(default="", repr=False)
     # Vacío mientras el agente corra solo en la computadora. Lo usa el bot
     # de Telegram; el resto del proyecto ni lo mira.
-    telegram_token: str = ""
+    telegram_token: str = field(default="", repr=False)
 
     # -- Chatwoot: solo lo mira el webhook (web/webhook.py) ------------------
     chatwoot_url: str = ""
-    chatwoot_token: str = ""
+    chatwoot_token: str = field(default="", repr=False)
     chatwoot_cuenta_id: str = "1"
     # La etiqueta que apaga al bot en una conversación: el traspaso a una
     # persona. Se pone con un clic desde la bandeja de Chatwoot.
@@ -64,9 +66,69 @@ class Config:
     # El secreto que va en la URL del webhook. Chatwoot no firma sus pedidos,
     # así que esto es lo único que separa un mensaje de verdad de cualquiera
     # que haya descubierto el dominio.
-    chatwoot_webhook_token: str = ""
+    chatwoot_webhook_token: str = field(default="", repr=False)
     # Cuánto espera juntando la ráfaga antes de contestar (ver buffer.py).
     buffer_segundos: int = 8
+
+    # -- Cómo responde en WhatsApp: lo pregunta la instalación ---------------
+    # 3 = como una persona, en varios mensajes cortos · 1 = todo en uno.
+    # Desde el 1/10/2026 Meta cobra cada mensaje que manda el agente, así que
+    # esto es elegir entre sonar humano y pagar menos (ver respuesta.py).
+    mensajes_por_respuesta: int = 3
+    # Cuántos mensajes le contesta a una misma persona en 24 horas antes de
+    # pasarla a alguien del equipo. 0 = sin tope. Por defecto apagado, para
+    # que nadie que actualice se encuentre conversaciones bloqueadas de golpe:
+    # la instalación lo pregunta y el .env.example trae 50.
+    tope_mensajes_por_dia: int = 0
+    # Lo que entra se recorta a este largo antes de llegar al modelo. Un texto
+    # pegado de 50.000 caracteres se paga en ese mensaje y en todos los que
+    # siguen, porque queda en la memoria de la conversación.
+    largo_maximo_de_entrada: int = 2000
+
+    # -- Lo que se pregunta al instalar, además ------------------------------
+    # Resolver una conversación en Chatwoot = el agente no le vuelve a hablar
+    # a esa persona. Por defecto apagado: hay equipos que resuelven de rutina
+    # y se quedarían sin agente para los clientes que vuelven. El .env.example
+    # lo trae prendido para las instalaciones nuevas.
+    respetar_resueltas: bool = False
+    # Que conteste solo el primer mensaje de cada conversación y se la pase a
+    # una persona (la etiqueta). Por defecto sigue toda la charla.
+    solo_el_primer_mensaje: bool = False
+
+    # -- Lo que llega que no es texto (canales/adjuntos.py) -------------------
+    # Las fotos las describe el mismo modelo del agente; se puede usar otro más
+    # barato del mismo proveedor.
+    describir_imagenes: bool = True
+    modelo_imagenes: str = ""
+    # Los audios los transcribe OpenAI: hace falta su clave aunque el agente
+    # use otro proveedor. Sin clave, el audio pasa a una persona.
+    transcribir_audios: bool = True
+    modelo_transcripcion: str = "gpt-4o-mini-transcribe"
+    clave_openai: str = field(default="", repr=False)
+
+    # -- El ritmo de persona ----------------------------------------------------
+    # Entre globo y globo, lo que tardaría alguien en tipearlo.
+    pausa_entre_globos: bool = True
+    # Una espera antes de contestar, con un rato de silencio primero y después
+    # los puntitos. 0 = contesta apenas junta la ráfaga.
+    espera_segundos: int = 0
+    silencio_segundos: int = 25
+    # El visto azul y los puntitos en el celular de la persona (opcional):
+    # los datos de tu cuenta de WhatsApp Business en Meta.
+    whatsapp_token: str = field(default="", repr=False)
+    whatsapp_phone_number_id: str = ""
+
+    # -- Avisos por mail cuando algo se rompe: lo pregunta la instalación ----
+    avisos_email: str = ""
+    # Por Google (lo recomendado): los tres los deja conectar_gmail.py.
+    gmail_client_id: str = ""
+    gmail_client_secret: str = field(default="", repr=False)
+    gmail_refresh_token: str = field(default="", repr=False)
+    # O por SMTP, si el mail no es de Google.
+    smtp_servidor: str = ""
+    smtp_puerto: int = 587
+    smtp_usuario: str = ""
+    smtp_clave: str = field(default="", repr=False)
 
     @classmethod
     def desde_entorno(
@@ -106,6 +168,42 @@ class Config:
                 f"MODO tiene que ser 'test' o 'produccion', no '{modo}'."
             )
 
+        mensajes_por_respuesta = _entero("MENSAJES_POR_RESPUESTA", 3)
+        if not 1 <= mensajes_por_respuesta <= 5:
+            raise ErrorDeConfiguracion(
+                "MENSAJES_POR_RESPUESTA va de 1 (todo en un mensaje) a 5 (como una "
+                f"persona, cinco globos ya es spam), no {mensajes_por_respuesta}."
+            )
+
+        largo_maximo_de_entrada = _entero("LARGO_MAXIMO_DE_ENTRADA", 2000)
+        if largo_maximo_de_entrada < 100:
+            raise ErrorDeConfiguracion(
+                "LARGO_MAXIMO_DE_ENTRADA tiene que ser de 100 caracteres o más: con "
+                f"{largo_maximo_de_entrada} el agente no llega a leer ni una pregunta."
+            )
+
+        tope_mensajes_por_dia = _entero("TOPE_MENSAJES_POR_DIA", 0)
+        if tope_mensajes_por_dia < 0:
+            raise ErrorDeConfiguracion(
+                "TOPE_MENSAJES_POR_DIA tiene que ser 0 (sin tope) o un número "
+                f"positivo, no {tope_mensajes_por_dia}."
+            )
+
+        espera_segundos = _entero("ESPERA_SEGUNDOS", 0)
+        silencio_segundos = _entero("SILENCIO_SEGUNDOS", 25)
+        if not 0 <= espera_segundos <= 600 or silencio_segundos < 0:
+            raise ErrorDeConfiguracion(
+                "ESPERA_SEGUNDOS va de 0 a 600 (diez minutos ya no es una pausa: es "
+                "no contestar) y SILENCIO_SEGUNDOS no puede ser negativo."
+            )
+
+        numero_id = (os.getenv("WHATSAPP_PHONE_NUMBER_ID") or "").strip()
+        if numero_id and not numero_id.isdigit():
+            raise ErrorDeConfiguracion(
+                "WHATSAPP_PHONE_NUMBER_ID es el id numérico del número en Meta (solo "
+                f"dígitos), no «{numero_id[:30]}». No es el número de teléfono."
+            )
+
         return cls(
             proveedor=proveedor,
             modelo=modelo,
@@ -128,6 +226,31 @@ class Config:
                 os.getenv("CHATWOOT_WEBHOOK_TOKEN") or ""
             ).strip(),
             buffer_segundos=_entero("BUFFER_SEGUNDOS", 8),
+            mensajes_por_respuesta=mensajes_por_respuesta,
+            tope_mensajes_por_dia=tope_mensajes_por_dia,
+            largo_maximo_de_entrada=largo_maximo_de_entrada,
+            respetar_resueltas=_booleano("RESPETAR_RESUELTAS", False),
+            solo_el_primer_mensaje=_booleano("SOLO_EL_PRIMER_MENSAJE", False),
+            describir_imagenes=_booleano("DESCRIBIR_IMAGENES", True),
+            modelo_imagenes=(os.getenv("MODELO_IMAGENES") or "").strip(),
+            transcribir_audios=_booleano("TRANSCRIBIR_AUDIOS", True),
+            modelo_transcripcion=(
+                os.getenv("MODELO_TRANSCRIPCION") or "gpt-4o-mini-transcribe"
+            ).strip(),
+            clave_openai=(os.getenv("OPENAI_API_KEY") or "").strip(),
+            pausa_entre_globos=_booleano("PAUSA_ENTRE_GLOBOS", True),
+            espera_segundos=espera_segundos,
+            silencio_segundos=silencio_segundos,
+            whatsapp_token=(os.getenv("WHATSAPP_TOKEN") or "").strip(),
+            whatsapp_phone_number_id=numero_id,
+            avisos_email=(os.getenv("AVISOS_EMAIL") or "").strip(),
+            gmail_client_id=(os.getenv("GMAIL_CLIENT_ID") or "").strip(),
+            gmail_client_secret=(os.getenv("GMAIL_CLIENT_SECRET") or "").strip(),
+            gmail_refresh_token=(os.getenv("GMAIL_REFRESH_TOKEN") or "").strip(),
+            smtp_servidor=(os.getenv("SMTP_SERVIDOR") or "").strip(),
+            smtp_puerto=_entero("SMTP_PUERTO", 587),
+            smtp_usuario=(os.getenv("SMTP_USUARIO") or "").strip(),
+            smtp_clave=(os.getenv("SMTP_CLAVE") or "").strip(),
         )
 
 

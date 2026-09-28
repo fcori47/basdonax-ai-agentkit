@@ -57,3 +57,48 @@ def test_nunca_manda_mas_del_maximo():
 
 def test_normaliza_los_saltos_de_windows():
     assert partir_respuesta("Hola.\r\n\r\nChau.") == ["Hola.", "Chau."]
+
+
+# -- Un solo mensaje (lo que cobra Meta es por mensaje) -----------------------
+
+TOPE = 4096
+
+
+def test_un_solo_mensaje_va_entero_con_sus_parrafos():
+    texto = "Hola.\n\n¿Qué necesitás?\n\nAvisame."
+    assert partir_respuesta(texto, maximo=1) == [texto]
+
+
+def test_un_solo_mensaje_largo_no_se_parte_por_oraciones():
+    """Con maximo=1 el largo de 320 no aplica: se parte solo por WhatsApp."""
+    texto = "Una oración cualquiera para llenar. " * 40  # ~1.400 caracteres
+    assert partir_respuesta(texto, maximo=1) == [texto.strip()]
+
+
+def test_un_solo_mensaje_que_no_entra_en_whatsapp_se_parte():
+    """Más de 4.096 caracteres Meta no lo entrega: mejor dos que ninguno."""
+    parrafo = "Esta es una oración de prueba para llenar el párrafo. " * 20
+    texto = "\n\n".join([parrafo.strip()] * 8)  # ~8.600 caracteres
+
+    mensajes = partir_respuesta(texto, maximo=1)
+
+    assert len(mensajes) > 1
+    assert all(len(m) <= TOPE for m in mensajes)
+    # Nada se pierde en el camino
+    assert sum(m.count("Esta es una oración") for m in mensajes) == 8 * 20
+
+
+def test_como_persona_el_ultimo_tampoco_pasa_el_tope():
+    """Lo que sobra se pega al último globo: ese globo tampoco puede pasarse."""
+    bloques = [f"Bloque {i}. " + "Relleno para que pese. " * 60 for i in range(12)]
+    mensajes = partir_respuesta("\n\n".join(bloques), maximo=3)
+
+    assert all(len(m) <= TOPE for m in mensajes)
+    assert "Bloque 11." in mensajes[-1]
+
+
+def test_una_oracion_gigante_se_corta_a_la_fuerza():
+    """Un modelo roto puede devolver 6.000 letras sin un punto: mejor partida que perdida."""
+    mensajes = partir_respuesta("a" * 6000, maximo=1)
+
+    assert [len(m) for m in mensajes] == [TOPE, 6000 - TOPE]

@@ -278,6 +278,9 @@ def test_la_conexion_de_postgres_no_se_la_lleva_el_recolector(monkeypatch):
     causa. En un script corto ni se nota, porque el proceso termina antes de
     que el recolector actúe.
     """
+    # Necesita el paquete de producción (requirements-produccion.txt): sin él,
+    # la prueba se saltea en vez de dejar en rojo una instalación recién hecha.
+    pytest.importorskip("langgraph.checkpoint.postgres")
     import gc
     from contextlib import contextmanager
 
@@ -329,9 +332,9 @@ def test_olvidar_borra_de_verdad():
     checkpointer, así que si no se borra de ahí, el agente nuevo la levanta
     igual y el botón miente.
     """
-    a = agente_falso(["hola", "te llamas Facu", "no se como te llamas"])
+    a = agente_falso(["hola", "te llamas Martina", "no se como te llamas"])
 
-    a.responder("me llamo Facu")
+    a.responder("me llamo Martina")
     assert len(a.historial()) == 2
 
     a.olvidar()

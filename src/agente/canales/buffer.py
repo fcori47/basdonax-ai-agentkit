@@ -27,12 +27,37 @@ cuando haya más de un proceso atendiendo: hoy hay uno solo, y una ráfaga que
 se pierde si el contenedor se reinicia justo en esos segundos no justifica
 sumar una base entera. Cuando se escale a varios procesos, se cambia esta
 clase y nada más — el webhook no se entera.
+
+Una parte de la ráfaga puede estar todavía leyéndose: una foto que describe
+el modelo, un audio que se transcribe. Esa parte entra como una tarea, en su
+lugar, y al soltar la ráfaga se la espera: así el orden es el de llegada y no
+el de quién terminó primero de leerse.
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import Awaitable, Callable
+import logging
+from typing import Awaitable, Callable, Union
+
+registro = logging.getLogger("agente.buffer")
+
+# Lo que se espera, como mucho, a que termine de leerse una parte (un audio
+# largo, una foto con el proveedor lento). Pasado eso, la ráfaga sale sin ella.
+ESPERA_DE_UNA_PARTE = 120
+
+Parte = Union[str, "asyncio.Future[str]"]
+
+
+async def _texto_de(parte: Parte) -> str:
+    """El texto de una parte: tal cual, o el de la tarea cuando termina."""
+    if isinstance(parte, str):
+        return parte
+    try:
+        return await asyncio.wait_for(asyncio.shield(parte), ESPERA_DE_UNA_PARTE) or ""
+    except Exception as e:
+        registro.error("una parte de la ráfaga no se pudo leer: %s", e)
+        return ""
 
 
 class BufferDeMensajes:
@@ -56,15 +81,21 @@ class BufferDeMensajes:
         # cada 50 segundos con una espera de 60 no se contesta nunca.
         self.tope = float(tope) if tope is not None else self.segundos * 3
 
-        self._pendientes: dict[str, list[str]] = {}
+        self._pendientes: dict[str, list[Parte]] = {}
         self._relojes: dict[str, asyncio.Task] = {}
         self._arrancó_en: dict[str, float] = {}
 
-    async def agregar(self, conversacion: str, texto: str) -> None:
-        """Suma un mensaje a la ráfaga de esa conversación."""
+    async def agregar(self, conversacion: str, texto: Parte) -> None:
+        """Suma un mensaje a la ráfaga de esa conversación.
+
+        `texto` puede ser el texto, o una tarea que lo va a devolver (un audio
+        que se está transcribiendo): se espera recién al soltar la ráfaga.
+        """
         # Sin espera configurada no hay ráfaga que juntar: se contesta y listo.
         if self.segundos <= 0:
-            await self.al_completar(conversacion, texto)
+            listo = await _texto_de(texto)
+            if listo:
+                await self.al_completar(conversacion, listo)
             return
 
         self._pendientes.setdefault(conversacion, []).append(texto)
@@ -97,10 +128,11 @@ class BufferDeMensajes:
         self._arrancó_en.pop(conversacion, None)
         partes = self._pendientes.pop(conversacion, [])
 
-        if not partes:
+        texto = await _juntar(partes)
+        if not texto:
             return
 
-        await self.al_completar(conversacion, "\n".join(partes))
+        await self.al_completar(conversacion, texto)
 
     def pendientes(self, conversacion: str) -> int:
         """Cuántos mensajes hay esperando. Lo usan los tests y el /salud."""
@@ -121,5 +153,12 @@ class BufferDeMensajes:
         self._pendientes = {}
 
         for conversacion, partes in pendientes.items():
-            if partes:
-                await self.al_completar(conversacion, "\n".join(partes))
+            texto = await _juntar(partes)
+            if texto:
+                await self.al_completar(conversacion, texto)
+
+
+async def _juntar(partes: list[Parte]) -> str:
+    """Las partes en el orden en que llegaron, sin las vacías."""
+    textos = [await _texto_de(p) for p in partes]
+    return "\n".join(t for t in textos if t)

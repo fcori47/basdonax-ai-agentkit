@@ -6,6 +6,8 @@
 .env
 .env.*
 *.key
+client_secret*.json
+credenciales*.json
 
 # El entorno virtual de tu máquina: son binarios de Windows, adentro de un
 # contenedor Linux no sirven para nada.
