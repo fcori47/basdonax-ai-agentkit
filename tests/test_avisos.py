@@ -1,17 +1,30 @@
 """Pruebas de los avisos por mail. No mandan ningún mail de verdad.
 
 El servidor de mail se reemplaza por uno de mentira que anota qué se le
-pidió: con qué puerto, si se cifró, con qué cuenta y qué mensaje.
+pidió: con qué puerto, si se cifró, con qué cuenta y qué mensaje. Google
+(la Gmail API), por uno que anota los pedidos y contesta lo que se le pide.
 """
 
 from __future__ import annotations
 
+import base64
+import email
+import email.policy
+import io
+import json
+import logging
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import agente.avisos as avisos_mod  # noqa: E402
+from agente import gmail  # noqa: E402
 from agente.avisos import Avisos  # noqa: E402
 
 
@@ -185,7 +198,8 @@ def test_la_prueba_sin_datos_dice_que_falta():
 
 def test_desde_el_entorno_no_pide_la_clave_del_modelo(monkeypatch):
     """Para probar el mail no hace falta tener cargado el resto."""
-    for nombre in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY"):
+    for nombre in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY",
+                   "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN"):
         monkeypatch.delenv(nombre, raising=False)
     monkeypatch.setenv("AVISOS_EMAIL", "duenio@ejemplo.com")
     monkeypatch.setenv("SMTP_SERVIDOR", "smtp.gmail.com")
@@ -236,5 +250,297 @@ def test_la_prueba_dice_que_variable_falta():
 
 
 def test_los_espacios_de_la_clave_se_sacan():
-    """Google muestra la contraseña de aplicación en bloques de cuatro."""
+    """Hay proveedores que muestran la clave en bloques de cuatro."""
     assert Avisos(clave="abcd efgh ijkl mnop").clave == "abcdefghijklmnop"
+
+
+# -- Por Google (Gmail API) ------------------------------------------------------
+
+SECRETO = "secreto-del-cliente-de-mentira"
+PERMISO = "permiso-duradero-de-mentira"
+
+
+class RespuestaFalsa:
+    def __init__(self, cuerpo: bytes):
+        self._cuerpo = cuerpo
+
+    def read(self):
+        return self._cuerpo
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+class GoogleFalso:
+    """Hace de Google: anota cada pedido y contesta lo que se le programó."""
+
+    def __init__(self):
+        self.pedidos: list[urllib.request.Request] = []
+        self.renovaciones = 0
+        self.al_renovar = lambda: (200, {
+            "access_token": f"acceso-{self.renovaciones}",
+            "expires_in": 3599,
+            "scope": gmail.PERMISO_PARA_MANDAR,
+            "token_type": "Bearer",
+        })
+        self.al_mandar = lambda: (200, {"id": "1", "threadId": "1", "labelIds": ["SENT"]})
+
+    def open(self, pedido, timeout=None):
+        self.pedidos.append(pedido)
+        if pedido.full_url == gmail.URL_DE_PERMISOS:
+            self.renovaciones += 1
+            codigo, datos = self.al_renovar()
+        elif pedido.full_url == gmail.URL_PARA_MANDAR:
+            codigo, datos = self.al_mandar()
+        else:
+            raise AssertionError(f"pedido a una dirección que no es de Google: {pedido.full_url}")
+        cuerpo = json.dumps(datos).encode()
+        if codigo >= 400:
+            raise urllib.error.HTTPError(pedido.full_url, codigo, "error", {}, io.BytesIO(cuerpo))
+        return RespuestaFalsa(cuerpo)
+
+    def mandados(self):
+        return [p for p in self.pedidos if p.full_url == gmail.URL_PARA_MANDAR]
+
+
+@pytest.fixture
+def google(monkeypatch):
+    falso = GoogleFalso()
+    monkeypatch.setattr(gmail, "_ABRIDOR", falso)
+    return falso
+
+
+def avisos_por_google(reloj=None):
+    return Avisos(
+        para="duenio@ejemplo.com",
+        gmail_cliente="123-abc.apps.googleusercontent.com",
+        gmail_secreto=SECRETO,
+        gmail_permiso=PERMISO,
+        reloj=reloj or Reloj(),
+    )
+
+
+def mail_mandado(pedido):
+    crudo = json.loads(pedido.data)["raw"]
+    return email.message_from_bytes(base64.urlsafe_b64decode(crudo), policy=email.policy.default)
+
+
+def test_por_google_pide_el_acceso_y_manda(google):
+    avisos = avisos_por_google()
+    assert avisos.metodo == "google" and avisos.activos
+
+    assert avisos.avisar("Se rompió algo", "el detalle", "tipo") is True
+
+    renovar, mandar = google.pedidos
+    assert urllib.parse.parse_qs(renovar.data.decode()) == {
+        "client_id": ["123-abc.apps.googleusercontent.com"],
+        "client_secret": [SECRETO],
+        "refresh_token": [PERMISO],
+        "grant_type": ["refresh_token"],
+    }
+    mail = mail_mandado(mandar)
+    assert mail["To"] == "duenio@ejemplo.com"
+    assert mail["Subject"] == "Se rompió algo"
+    assert "el detalle" in mail.get_content()
+    assert mail["From"] is None, "el remitente lo pone Google: la cuenta que dio el permiso"
+
+
+def test_el_acceso_viaja_solo_a_google(google):
+    """Va como cabecera «sin redirigir»: una redirección no se lo lleva a otro lado."""
+    avisos_por_google().avisar("a", "b", "tipo")
+
+    mandar = google.mandados()[0]
+    assert mandar.unredirected_hdrs.get("Authorization") == "Bearer acceso-1"
+    assert "Authorization" not in mandar.headers
+
+
+def test_el_acceso_se_reusa_mientras_vale(google):
+    """El acceso dura una hora: no se pide uno por mail."""
+    reloj = Reloj()
+    avisos = avisos_por_google(reloj)
+
+    avisos.avisar("a", "1", "uno")
+    avisos.avisar("b", "2", "dos")
+    assert google.renovaciones == 1
+
+    reloj.pasan(60 * 60)
+    avisos.avisar("c", "3", "tres")
+    assert google.renovaciones == 2, "vencido, se pide uno nuevo"
+    assert len(google.mandados()) == 3
+
+
+def test_revisar_usa_el_permiso_sin_mandar_nada(google):
+    """Google borra el permiso que pasa seis meses sin usarse."""
+    avisos = avisos_por_google()
+
+    avisos.revisar()
+    avisos.revisar()
+
+    assert google.renovaciones == 2, "revisar siempre lo usa, aunque haya un acceso guardado"
+    assert google.mandados() == []
+
+
+def test_revisar_con_smtp_no_hace_nada():
+    Avisos(para="d@ejemplo.com", servidor="smtp.ejemplo.com", usuario="a@ejemplo.com", clave="x").revisar()
+
+
+def test_permiso_vencido_dice_que_hacer(google):
+    google.al_renovar = lambda: (400, {
+        "error": "invalid_grant", "error_description": "Token has been expired or revoked."
+    })
+    avisos = avisos_por_google()
+
+    with pytest.raises(gmail.ErrorDeGoogle, match="conectar_gmail.py") as error:
+        avisos.probar()
+    assert "7 días" in str(error.value), "nombra la trampa de la app «En prueba»"
+    assert avisos.avisar("a", "b", "otro") is False, "y el aviso no voltea nada"
+
+
+def test_si_el_acceso_deja_de_valer_el_proximo_aviso_pide_otro(google):
+    """Revocado a mitad de hora: el acceso guardado no se sigue usando."""
+    rechazos = [True]
+
+    def mandar():
+        if rechazos and rechazos.pop():
+            return 401, {"error": {"code": 401, "message": "Request had invalid authentication credentials.",
+                                   "status": "UNAUTHENTICATED"}}
+        return 200, {"id": "1"}
+
+    google.al_mandar = mandar
+    avisos = avisos_por_google()
+
+    with pytest.raises(gmail.ErrorDeGoogle, match="conectar_gmail.py"):
+        avisos.probar()
+    assert avisos.avisar("a", "b", "tipo") is True
+    assert google.renovaciones == 2, "después del 401 se pidió un acceso nuevo"
+
+
+def test_gmail_api_sin_habilitar_dice_donde_se_habilita(google):
+    google.al_mandar = lambda: (403, {"error": {
+        "code": 403,
+        "message": "Gmail API has not been used in project 123 before or it is disabled.",
+        "status": "PERMISSION_DENIED",
+        "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "SERVICE_DISABLED"}],
+    }})
+
+    with pytest.raises(gmail.ErrorDeGoogle, match="Habilitala"):
+        avisos_por_google().probar()
+
+
+def test_las_claves_de_google_no_aparecen_en_ningun_lado(google, caplog):
+    google.al_renovar = lambda: (401, {"error": "invalid_client", "error_description": "Unauthorized"})
+    avisos = avisos_por_google()
+
+    with caplog.at_level(logging.DEBUG):
+        avisos.avisar("a", "b", "tipo")
+    with pytest.raises(gmail.ErrorDeGoogle) as error:
+        avisos.probar()
+
+    for secreto in (SECRETO, PERMISO):
+        assert secreto not in caplog.text
+        assert secreto not in str(error.value)
+        assert secreto not in repr(avisos)
+
+
+def test_elige_por_donde_sale_solo():
+    assert Avisos(para="d@ejemplo.com").metodo == ""
+    assert Avisos(servidor="smtp.ejemplo.com").metodo == "smtp"
+    assert Avisos(gmail_permiso="x").metodo == "google"
+    assert Avisos(servidor="smtp.ejemplo.com", gmail_cliente="x").metodo == "google", (
+        "con las dos cargadas, va por Google"
+    )
+
+
+def test_sin_nada_cargado_pide_lo_de_google():
+    """Es el camino recomendado: lo que falta se nombra por ahí."""
+    assert Avisos().faltan() == [
+        "AVISOS_EMAIL", "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN"
+    ]
+
+
+def test_google_a_medias_no_esta_activo():
+    a = Avisos(para="d@ejemplo.com", gmail_cliente="c", gmail_secreto="s")
+
+    assert a.activos is False
+    assert a.faltan() == ["GMAIL_REFRESH_TOKEN"]
+
+
+def test_desde_el_entorno_lee_lo_de_google(monkeypatch):
+    for nombre in ("SMTP_SERVIDOR", "SMTP_USUARIO", "SMTP_CLAVE"):
+        monkeypatch.delenv(nombre, raising=False)
+    monkeypatch.setenv("AVISOS_EMAIL", "duenio@ejemplo.com")
+    monkeypatch.setenv("GMAIL_CLIENT_ID", "123-abc.apps.googleusercontent.com")
+    monkeypatch.setenv("GMAIL_CLIENT_SECRET", SECRETO)
+    monkeypatch.setenv("GMAIL_REFRESH_TOKEN", PERMISO)
+
+    avisos = Avisos.desde_entorno()
+
+    assert avisos.metodo == "google" and avisos.activos
+
+
+def test_con_google_se_verifica_el_certificado_y_no_se_siguen_redirecciones():
+    https = [h for h in gmail._ABRIDOR.handlers if isinstance(h, urllib.request.HTTPSHandler)]
+    assert https and _verifica(https[0]._context)
+
+    redirecciones = [h for h in gmail._ABRIDOR.handlers if isinstance(h, urllib.request.HTTPRedirectHandler)]
+    assert redirecciones and all(isinstance(h, gmail._SinRedirecciones) for h in redirecciones)
+    with pytest.raises(gmail.ErrorDeGoogle):
+        gmail._SinRedirecciones().redirect_request(None, None, 302, "Found", {}, "https://otro.ejemplo.com/")
+
+
+def test_probar_sin_mandar_toma_la_queja_por_el_mail_vacio_como_que_anda(google):
+    """Google revisa la API y el permiso antes que el mail: si se queja del mail, lo demás anda."""
+    google.al_mandar = lambda: (400, {"error": {
+        "code": 400,
+        "message": "'raw' RFC822 payload message string or uploading message via /upload/* URL required",
+        "status": "INVALID_ARGUMENT",
+    }})
+
+    gmail.probar_sin_mandar("acceso")
+
+
+def test_probar_sin_mandar_avisa_si_la_api_no_esta_habilitada(google):
+    google.al_mandar = lambda: (403, {"error": {
+        "code": 403, "message": "Gmail API has not been used in project 123 before or it is disabled.",
+        "status": "PERMISSION_DENIED",
+    }})
+
+    with pytest.raises(gmail.ErrorDeGoogle, match="Habilitala"):
+        gmail.probar_sin_mandar("acceso")
+
+
+@pytest.mark.parametrize(
+    "codigo, cuerpo, cuando, dice",
+    [
+        (400, {"error": "invalid_grant"}, "renovar", "En prueba"),
+        (400, {"error": "invalid_grant"}, "canjear", "se venció o ya se usó"),
+        (401, {"error": "invalid_client"}, "renovar", "GMAIL_CLIENT_ID"),
+        (401, {"error": "deleted_client"}, "renovar", "siga existiendo"),
+        (400, {"error": "redirect_uri_mismatch"}, "canjear", "App de escritorio"),
+        (403, {"error": {"code": 403, "message": "Request had insufficient authentication scopes.",
+                         "status": "PERMISSION_DENIED",
+                         "details": [{"reason": "ACCESS_TOKEN_SCOPE_INSUFFICIENT"}]}},
+         "mandar", "Enviar correo"),
+        (400, {"error": {"code": 400, "message": "Invalid To header", "status": "INVALID_ARGUMENT"}},
+         "mandar", "AVISOS_EMAIL"),
+        (429, {}, "mandar", "Esperá"),
+        (503, {}, "mandar", "de su lado"),
+        (418, "esto no es JSON", "mandar", "418"),
+    ],
+)
+def test_lo_que_contesta_google_se_explica(codigo, cuerpo, cuando, dice):
+    texto = cuerpo if isinstance(cuerpo, str) else json.dumps(cuerpo)
+    assert dice in gmail.explicar(codigo, texto, cuando)
+
+
+def test_lo_que_dice_google_llega_al_registro_en_una_sola_linea():
+    """Un salto de línea en la respuesta no puede inventar renglones en el registro."""
+    texto = json.dumps({"error": {"code": 418, "message": "uno\nERROR falso\r\notro"}})
+
+    explicado = gmail.explicar(418, texto, "mandar")
+
+    assert "\n" not in explicado and "\r" not in explicado
+    assert "uno ERROR falso otro" in explicado

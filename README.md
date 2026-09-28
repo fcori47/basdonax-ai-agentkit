@@ -47,7 +47,8 @@ Para WhatsApp vas a necesitar:
   **Postgres**.
 - **Una clave** de Claude, OpenAI o Gemini, con saldo.
 - **Una tarjeta de crédito Visa o Mastercard cargada en Meta** (abajo, por qué).
-- **Una cuenta de mail** para los avisos (con Gmail alcanza).
+- **Una cuenta de Google** (Gmail o Workspace) para los avisos: se conecta
+  con Google Cloud, gratis y sin tarjeta, con un permiso que solo deja mandar.
 
 ---
 
@@ -83,13 +84,15 @@ Para WhatsApp vas a necesitar:
 - **Tope de mensajes por conversación y por día:** el que charla de cualquier
   cosa pasa a una persona del equipo y el agente deja de gastar.
 - **Si algo se rompe, el cliente no ve el error:** la conversación pasa a una
-  persona, queda una nota privada en Chatwoot y te llega un mail.
+  persona, queda una nota privada en Chatwoot y te llega un mail. El mail
+  sale con **Google Cloud**, con un permiso que solo deja mandar: el agente no
+  puede leer tu casilla. `python conectar_gmail.py` conecta la cuenta y
   `python probar_mail.py` lo prueba antes de dar la instalación por terminada.
 - **Más seguro:** la clave del webhook ya no queda en los registros del
   servidor y tiene que ser larga (si no, el agente no arranca); un pedido de
   más de medio mega se descarta sin terminar de leerlo; un texto pegado enorme
   se recorta a 2.000 caracteres antes de llegar al modelo; y el mail de avisos
-  verifica el certificado del servidor de correo.
+  verifica el certificado del servidor y no sigue redirecciones.
 - **Ningún mensaje pasa los 4.096 caracteres**, el tope de WhatsApp: uno más
   largo, Meta no lo entrega.
 - **¿Tu agente está en n8n?** Claude Code te lo actualiza con una skill que
@@ -264,6 +267,7 @@ basdonax-ai-agentkit/
 │   ├── respuesta.py        ← la respuesta en varios mensajes, o en uno
 │   ├── frenos.py           ← el tope de mensajes por persona y por día
 │   ├── avisos.py           ← el mail cuando algo se rompe
+│   ├── gmail.py            ← el permiso de Google Cloud y la Gmail API
 │   ├── config.py           ← lee el .env
 │   ├── canales/
 │   │   ├── base.py         ← la forma de un canal
@@ -283,6 +287,7 @@ basdonax-ai-agentkit/
 ├── servidor.py             ← levantar la web
 ├── bot_telegram.py         ← levantar el bot de Telegram
 ├── webhook_chatwoot.py     ← levantar el webhook de WhatsApp
+├── conectar_gmail.py       ← conectar la cuenta de Google de los avisos
 ├── probar_mail.py          ← mandar un mail de prueba de los avisos
 ├── AGENTS.md               ← contexto para Codex, Claude Code, Cursor…
 ├── CLAUDE.md               ← apunta a AGENTS.md
@@ -667,26 +672,67 @@ respuesta, **la persona que escribió no ve ningún error**: la conversación
 pasa a `humano`, queda una nota privada con el error y te llega un mail. De un
 mismo error sale un mail por hora como mucho, no uno por cada persona.
 
+El mail sale de una cuenta de Google (Gmail o Workspace) **con un permiso de
+Google Cloud que sirve solo para mandar**: el agente no puede leer ni borrar
+nada de esa casilla, y el permiso se revoca desde tu cuenta sin cambiar
+ninguna contraseña. Es gratis y no pide tarjeta. Se arma una vez:
+
+1. **Un proyecto:** https://console.cloud.google.com/projectcreate (el nombre
+   da igual, por ejemplo «agente»). Fijate que quede elegido arriba, en el
+   selector de proyectos.
+2. **La Gmail API habilitada:**
+   https://console.cloud.google.com/apis/library/gmail.googleapis.com →
+   **Habilitar**.
+3. **La pantalla del permiso:** https://console.cloud.google.com/auth/overview
+   → **Comenzar**. El nombre de la app es lo que vas a ver al aceptar (por
+   ejemplo «Avisos del agente»), el mail de asistencia es el tuyo, y en
+   **Público** (*Audience*):
+   - si tu cuenta es de empresa (Google Workspace): **Interno**, y listo.
+   - si es un Gmail común: **Externo**, y al terminar, en
+     https://console.cloud.google.com/auth/audience → **Publicar app** →
+     Confirmar. **No la dejes «En prueba»:** en prueba, Google da un permiso
+     de 7 días, y el día 8 los avisos dejan de salir sin que nadie se entere.
+     No hace falta mandarla a verificar.
+4. **El cliente:** https://console.cloud.google.com/auth/clients → **Crear
+   cliente** → tipo **App de escritorio** → Crear → **Descargar JSON**.
+   Bajalo en ese momento: después Google no te vuelve a mostrar la clave.
+5. **Conectá la cuenta**, en tu computadora, en la carpeta del agente:
+
+   ```bash
+   python conectar_gmail.py
+   ```
+
+   Busca el JSON en la carpeta y en Descargas (si está en otro lado, pasale
+   la ruta), abre el navegador, elegís la cuenta que va a mandar los avisos y
+   aceptás «Enviar correo electrónico en tu nombre». Si aparece «Google no
+   verificó esta app», es la tuya: **Avanzado → Ir a … (no seguro)**. Deja en
+   el `.env` tres líneas sin mostrarlas (son una llave), y te avisa si falta
+   algo, como la API sin habilitar o la app en prueba.
+
+Queda así:
+
 ```bash
 AVISOS_EMAIL=vos@tuempresa.com
-SMTP_SERVIDOR=smtp.gmail.com
-SMTP_PUERTO=587
-SMTP_USUARIO=la-cuenta-que-manda@gmail.com
-SMTP_CLAVE=una-contraseña-de-aplicación
+# estas tres las deja conectar_gmail.py
+GMAIL_CLIENT_ID=…
+GMAIL_CLIENT_SECRET=…
+GMAIL_REFRESH_TOKEN=…
 ```
 
-Con Gmail, la clave **no es la tuya de siempre**: es una contraseña de
-aplicación de 16 letras que sacás en https://myaccount.google.com/apppasswords
-(hace falta tener la verificación en dos pasos activada; los espacios que
-muestra Google no importan). No hace falta nada de Google Cloud. Si tu mail es
-del trabajo (Google Workspace) o usás solo llaves de seguridad, puede que
-Google no te deje crearla: usá una cuenta de Gmail común solo para los avisos.
-Y si algún día cambiás la contraseña de esa cuenta, Google borra las
-contraseñas de aplicación y los avisos dejan de salir: creá otra y volvé a
-probar. Si dejás `AVISOS_EMAIL` vacío, todo lo demás funciona igual y el
-aviso queda solo en los registros del servidor.
+El permiso no vence solo. Se corta si cambiás la contraseña de esa cuenta de
+Google o si le sacás el acceso en https://myaccount.google.com/connections:
+para reconectar, `python conectar_gmail.py` de nuevo (ya sin el JSON: usa el
+cliente que quedó en el `.env`) y copiás `GMAIL_REFRESH_TOKEN` al servidor.
+Google también borra un permiso que pasa seis meses sin usarse; el agente lo
+usa al arrancar y una vez por día, así que eso no pasa. Si alguna vez deja de
+valer, el registro del servidor lo dice: «Los avisos por mail NO van a salir».
 
-Y probalo **en el servidor donde corre el agente**, antes de dar la
+¿Tu mail no es de Google (Outlook, Zoho, el de tu dominio)? En vez de las
+tres `GMAIL_*`, completá las `SMTP_*` con los datos de tu proveedor. Y si
+dejás `AVISOS_EMAIL` vacío, todo lo demás funciona igual y el aviso queda
+solo en los registros del servidor.
+
+Después, probalo **en el servidor donde corre el agente**, antes de dar la
 instalación por terminada. En Coolify, desde la terminal de la aplicación;
 con Docker:
 
@@ -695,9 +741,8 @@ docker exec agente python probar_mail.py
 ```
 
 Si el mail llega desde ahí, los avisos también. Probarlo en tu computadora
-sirve para revisar la clave, pero no prueba que el servidor pueda mandar
-mails: hay proveedores que cierran esa salida. Si falla, el script te dice qué
-pasó (la clave equivocada es lo más común la primera vez).
+sirve para revisar los datos, pero no prueba que el servidor pueda mandar
+mails. Si falla, el script te dice qué pasó y qué hacer.
 
 ---
 
@@ -888,12 +933,15 @@ docker run -d --env-file .env -p 8000:8000 --name agente agente
    CHATWOOT_URL · CHATWOOT_TOKEN · CHATWOOT_CUENTA_ID
    CHATWOOT_WEBHOOK_TOKEN · CHATWOOT_ETIQUETA_HUMANO · BUFFER_SEGUNDOS
    MENSAJES_POR_RESPUESTA · TOPE_MENSAJES_POR_DIA · LARGO_MAXIMO_DE_ENTRADA
-   AVISOS_EMAIL · SMTP_SERVIDOR · SMTP_PUERTO · SMTP_USUARIO · SMTP_CLAVE
+   AVISOS_EMAIL · GMAIL_CLIENT_ID · GMAIL_CLIENT_SECRET · GMAIL_REFRESH_TOKEN
    ```
 
    Esos dos últimos renglones son las cuatro decisiones: si falta
    `TOPE_MENSAJES_POR_DIA`, el agente queda sin tope, y si falta
-   `AVISOS_EMAIL`, no te llega ningún mail.
+   `AVISOS_EMAIL`, no te llega ningún mail. Las tres `GMAIL_*` las copiás
+   de tu `.env` (las dejó ahí `conectar_gmail.py`). Si tu mail no es de
+   Google, en su lugar van `SMTP_SERVIDOR · SMTP_PUERTO · SMTP_USUARIO ·
+   SMTP_CLAVE`.
 
 6. Desplegá, y entrá a `https://tu-dominio.com/salud` para confirmar.
 
@@ -1037,10 +1085,13 @@ Y estas, solo si vas a atender WhatsApp con `webhook_chatwoot.py`:
 | `TOPE_MENSAJES_POR_DIA` | `0` (el `.env.example` trae `50`) | Cuántos mensajes de una misma conversación atiende en 24 h antes de pasarla a `humano` (cuentan los que manda la persona, no las respuestas). `0` = sin tope |
 | `LARGO_MAXIMO_DE_ENTRADA` | `2000` | Lo que entra se recorta a este largo antes de llegar al modelo |
 | `AVISOS_EMAIL` | — | A quién le llega el mail cuando algo se rompe |
-| `SMTP_SERVIDOR` | — (el `.env.example` trae `smtp.gmail.com`) | Por dónde sale ese mail |
+| `GMAIL_CLIENT_ID` | — | El cliente de Google Cloud («App de escritorio»). Lo deja `conectar_gmail.py` |
+| `GMAIL_CLIENT_SECRET` | — | Su clave. Lo deja `conectar_gmail.py` |
+| `GMAIL_REFRESH_TOKEN` | — | El permiso de la cuenta para mandar mails (solo mandar). Lo deja `conectar_gmail.py` |
+| `SMTP_SERVIDOR` | — | Solo si tu mail no es de Google: el servidor de tu proveedor |
 | `SMTP_PUERTO` | `587` | `587` (STARTTLS) o `465` (cifrado desde el arranque) |
 | `SMTP_USUARIO` | — | La cuenta que manda el mail |
-| `SMTP_CLAVE` | — | Su clave (en Gmail, una contraseña de aplicación: los espacios no importan) |
+| `SMTP_CLAVE` | — | Su clave (los espacios no importan) |
 | `PUERTO` | `8000` | Dónde escucha el webhook |
 
 **No hace falta ninguna variable de Meta** (`WHATSAPP_TOKEN`, `APP_SECRET` y
@@ -1085,6 +1136,13 @@ motivos habituales:
 - La clave está mal pegada (le sobra un espacio o le falta un pedazo)
 - El nombre del modelo en el `.env` no existe → elegilo de la lista
 - No tenés saldo en la cuenta del proveedor
+
+**¿Por qué el mail va con Google Cloud y no con una contraseña de aplicación?**
+Por lo que queda en el servidor. Una contraseña de aplicación abre la casilla
+entera: quien la tenga puede leer todo tu mail. El permiso de Google Cloud
+sirve solo para mandar (`gmail.send`): si alguien se lleva las variables del
+servidor, no puede leer ni un mail. Y se revoca desde tu cuenta de Google sin
+cambiar ninguna contraseña.
 
 **¿Puedo usarlo con Claude Code?**
 Sí, y con Codex y Cursor también. El archivo **`AGENTS.md`** lo leen solos:

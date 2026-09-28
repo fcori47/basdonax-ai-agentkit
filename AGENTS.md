@@ -45,7 +45,8 @@ Lo que importa acá es qué hace cada uno:
 | `prompts.py` | Lee y guarda `prompts/sistema.md` |
 | `respuesta.py` | Parte la respuesta en varios mensajes, o la deja en uno (`MENSAJES_POR_RESPUESTA`) |
 | `frenos.py` | El tope de mensajes por conversación y por día |
-| `avisos.py` | El mail al dueño cuando algo se rompe |
+| `avisos.py` | El mail al dueño cuando algo se rompe: por Google (lo recomendado) o por SMTP |
+| `gmail.py` | Habla con Google: el permiso de Google Cloud y la Gmail API. Solo biblioteca estándar y **sin importar nada del paquete**: `conectar_gmail.py` lo carga suelto |
 | `consola.py` | Que la terminal de Windows no rompa con las tildes |
 | `config.py` | Lee el `.env`. Única fuente de configuración. |
 | `canales/base.py` | La forma de un canal |
@@ -56,7 +57,8 @@ Lo que importa acá es qué hace cada uno:
 | `../webhook_chatwoot.py` | El punto de entrada del webhook |
 | `../Dockerfile` | Empaqueta el **webhook** (`webhook_chatwoot.py`); el bot de Telegram queda adentro por si lo querés correr |
 | `web/app.py` | La plataforma de pruebas (FastAPI + un solo HTML) — **no es** el webhook |
-| `../probar_mail.py` | Manda un mail de prueba de los avisos. Es el último paso de la instalación |
+| `../conectar_gmail.py` | Conecta la cuenta de Google que manda los avisos. Se corre una vez, **en la computadora** de la persona (abre el navegador), y deja los tres `GMAIL_*` en el `.env` sin mostrarlos |
+| `../probar_mail.py` | Manda un mail de prueba de los avisos. Es el último paso de la instalación, y se corre **en el servidor** |
 | `../n8n/format_chain_v4.js` | La Format Chain nueva, para el que tiene el agente en n8n y la pega a mano. **Es copia exacta** de la que usa el actualizador: un test lo cuida |
 | `../.claude/skills/actualizar-agente-whatsapp/` | El actualizador: una skill de Claude Code que adapta al cobro de Meta un agente hecho en n8n, en este kit o que todavía no existe. Sus pruebas (contra un n8n de mentira) están en `tests/actualizador/` |
 | `../docs/img/` | Las imágenes del README. Se generan aparte; no son parte del agente |
@@ -104,8 +106,10 @@ Ninguna credencial en el código, ni una. Las claves se leen únicamente en
 ## Reglas al escribir código acá
 
 - **Ninguna credencial en el código.** Todas viven en el `.env` y se leen en
-  `config.py`. (Sí hay algún `os.getenv()` fuera de ahí, pero solo para rutas
-  y nunca para una clave.)
+  `config.py`. Hay dos excepciones, a propósito: `Avisos.desde_entorno()` lee
+  solo lo del mail (para que `probar_mail.py` no pida la clave del modelo) y
+  `conectar_gmail.py` escribe en el `.env` los tres datos de Google. Fuera de
+  eso, algún `os.getenv()` suelto es para rutas, nunca para una clave.
 - **Español**, según la convención de arriba.
 - **Comentar el *por qué*, no el *qué*.** Este repo es material didáctico: si
   algo se hace de una forma no obvia, explicá la razón.
@@ -121,7 +125,9 @@ Ninguna credencial en el código, ni una. Las claves se leen únicamente en
   se sigue igual), `_mensajes_en_memoria()` (es un contador para la pantalla),
   `Avisos.avisar()` (un mail que no sale no puede tirar abajo al agente que
   avisa), los pasos de `algo_se_rompio()` en `web/webhook.py` (que no se
-  pueda dejar la nota no puede impedir el mail), `Chatwoot.escribiendo()`
+  pueda dejar la nota no puede impedir el mail), `mantener_el_permiso()` en
+  el mismo archivo (si Google no acepta el permiso, queda en el registro y
+  se vuelve a probar al otro día), `Chatwoot.escribiendo()`
   (el «escribiendo…» es cosmético) y `Chatwoot._etiquetas_de()` (si no se
   pueden leer, se responde igual). **No agregues otra sin dejar
   el motivo escrito al lado.**
@@ -234,37 +240,69 @@ contestar cuando alguien del equipo se la saca. Si no sabe qué poner, 50. `0`
 es sin tope. Recomendale además un tope de gasto en la consola del proveedor
 del modelo: es el único freno que no depende del agente.
 
-**4. ¿A qué mail te aviso si algo se rompe?** → `AVISOS_EMAIL` y `SMTP_*`
+**4. ¿A qué mail te aviso si algo se rompe?** → `AVISOS_EMAIL` y los tres
+`GMAIL_*`
 
 Contale: si falla el modelo o Chatwoot no acepta la respuesta, la persona
 que escribió no ve ningún error; la conversación pasa a `humano`, queda una
 nota privada y a él le llega un mail (de un mismo error, uno por hora como
-mucho). Para mandarlo hace falta una cuenta que mande. Con Gmail, guialo así:
+mucho). Preguntale a qué dirección le llega (`AVISOS_EMAIL`) y desde qué
+cuenta de Google sale (puede ser la misma).
 
-1. Que active la verificación en dos pasos, si no la tiene: en la seguridad
-   de su cuenta (https://myaccount.google.com/security), la opción
-   «Verificación en 2 pasos». Sin eso, Google no deja crear el paso 2.
-2. Que cree una contraseña de aplicación en
-   https://myaccount.google.com/apppasswords (el nombre da igual, por
-   ejemplo «agente»). Google le muestra 16 letras: esa es `SMTP_CLAVE` (los
-   espacios no importan). **No es su contraseña de siempre**, y no hace falta
-   crear nada en Google Cloud.
-3. `SMTP_SERVIDOR=smtp.gmail.com`, `SMTP_PUERTO=587`,
-   `SMTP_USUARIO` = esa cuenta de Gmail, `AVISOS_EMAIL` = a quién le llega.
-4. **La prueba se hace donde corre el agente**: ya desplegado, en la terminal
-   del contenedor (en Coolify, la terminal de la aplicación; con Docker,
-   `docker exec agente python probar_mail.py`). Preguntale si le llegó (que
-   mire también en correo no deseado). Probarlo solo en su computadora no
-   prueba que el servidor pueda mandar mails. **No des la instalación por
-   terminada sin ese mail.**
+El mail sale **con Google Cloud**: un permiso que sirve solo para mandar
+(`gmail.send`). El agente no puede leer ni borrar nada de esa casilla, el
+permiso se revoca desde la cuenta sin cambiar contraseñas, y es gratis (no
+pide tarjeta). Guialo paso a paso, con los enlaces directos, y que te
+confirme cada uno antes de seguir:
 
-Si su cuenta es de empresa (Google Workspace), usa solo llaves de seguridad
-o tiene la Protección avanzada, Google no le deja crear contraseñas de
-aplicación: sirve una cuenta de Gmail común solo para los avisos, o el
-servidor de mail de su dominio. Avisale también que si algún día cambia la
-contraseña de esa cuenta, Google borra las contraseñas de aplicación: hay que
-crear otra y volver a probar. Si no quiere avisos, `AVISOS_EMAIL` vacío: todo
-lo demás anda igual.
+1. **Un proyecto**: https://console.cloud.google.com/projectcreate (el
+   nombre da igual, por ejemplo «agente»). Que se asegure de que quedó
+   elegido arriba, en el selector de proyectos.
+2. **La Gmail API**: https://console.cloud.google.com/apis/library/gmail.googleapis.com
+   → **Habilitar**.
+3. **La pantalla del permiso**: https://console.cloud.google.com/auth/overview
+   → **Comenzar**. El nombre de la app es lo que va a ver al aceptar (por
+   ejemplo «Avisos del agente»), el mail de asistencia es el suyo, y en
+   **Público** (*Audience*):
+   - si la cuenta que manda es de empresa (Google Workspace): **Interno**.
+     No hace falta nada más.
+   - si es un Gmail común: **Externo**, y al terminar, en
+     https://console.cloud.google.com/auth/audience → **Publicar app** →
+     Confirmar. **Que no quede «En prueba»**: en prueba, Google da un permiso
+     de 7 días, `probar_mail.py` anda el primer día y el octavo los avisos se
+     cortan sin que nadie se entere. No hace falta mandarla a verificar.
+4. **El cliente**: https://console.cloud.google.com/auth/clients → **Crear
+   cliente** → tipo **App de escritorio** (no «Aplicación web») → Crear →
+   **Descargar JSON**. Que lo baje en ese momento: después Google no vuelve a
+   mostrar la clave (si se le pasó, en el cliente, *Agregar secreto*).
+5. **Conectar la cuenta**: corré `python conectar_gmail.py` en su
+   computadora, en la carpeta del kit (busca el JSON ahí y en Descargas; si
+   está en otro lado, pasale la ruta). Abre su navegador: que elija la cuenta
+   que va a mandar y acepte «Enviar correo electrónico en tu nombre». Si
+   aparece «Google no verificó esta app», es la suya: **Avanzado → Ir a …
+   (no seguro)**. El script espera hasta 5 minutos: corrélo con tiempo
+   (en Claude Code, con un timeout largo o en segundo plano).
+   Deja en el `.env` `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET` y
+   `GMAIL_REFRESH_TOKEN`, y avisa si falta algo (la API sin habilitar, la app
+   en prueba). **No leas ni muestres esos valores**: son una llave. Si hay
+   que pasarlos al servidor, que los copie la persona desde su `.env`.
+6. **La prueba se hace donde corre el agente**: con las variables cargadas en
+   el servidor y desplegado, en la terminal del contenedor (en Coolify, la
+   terminal de la aplicación; con Docker, `docker exec agente python
+   probar_mail.py`). Preguntale si le llegó (que mire también en correo no
+   deseado) y desde qué cuenta salió. **No des la instalación por terminada
+   sin ese mail.**
+
+Contale también: el permiso no vence solo, pero se corta si cambia la
+contraseña de esa cuenta de Google o si le saca el acceso desde
+https://myaccount.google.com/connections. Para reconectar: `python
+conectar_gmail.py` de nuevo (sin el JSON: usa el cliente que ya está en el
+`.env`) y copiar `GMAIL_REFRESH_TOKEN` al servidor. Si el permiso deja de
+valer, el registro del servidor dice «Los avisos por mail NO van a salir».
+
+Si su mail no es de Google (Outlook, Zoho, el de su dominio), van las
+`SMTP_*` con los datos de su proveedor, en vez de las `GMAIL_*`. Si no
+quiere avisos, `AVISOS_EMAIL` vacío: todo lo demás anda igual.
 
 **En el servidor van todas las variables**: las de Chatwoot y las de estas
 cuatro decisiones (en Coolify, *Environment Variables* de la aplicación). La
@@ -361,6 +399,20 @@ Cosas que parecen bugs y no lo son, o que cuestan de encontrar:
 - **`MAX_TOKENS` lo manda la plataforma, no el usuario.** Es el tope de salida
   del modelo elegido; se acomoda solo al cambiar de modelo. El único campo que
   toca una persona en la barra es `MEMORIA_MENSAJES`.
+- **Avisos por Google: una app «En prueba» da un permiso de 7 días.** El día 1
+  `probar_mail.py` anda y el día 8 los avisos se cortan callados. Por eso la
+  instalación la publica (o la hace Interna), y `conectar_gmail.py` avisa si
+  Google devuelve el permiso con fecha de vencimiento
+  (`refresh_token_expires_in`).
+- **Google borra el permiso que pasa seis meses sin usarse**, y un agente que
+  anda bien no manda avisos. `mantener_el_permiso()` (`web/webhook.py`) lo usa
+  al arrancar y una vez por día (`Avisos.revisar()`).
+- **`gmail.py` no puede importar nada del paquete.** `conectar_gmail.py` lo
+  carga suelto para correr en una computadora sin LangChain instalado:
+  importar `agente` arrastraría todo.
+- **Se pide un solo permiso, `gmail.send`.** Con dos o más, Google muestra una
+  casilla por permiso y la persona puede destildar justo el de mandar; igual,
+  `conectar_gmail.py` revisa que haya vuelto y, si no, no guarda nada.
 
 ---
 

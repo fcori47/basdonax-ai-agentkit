@@ -812,3 +812,58 @@ def test_la_clave_se_tapa_aunque_la_direccion_este_mal_escrita(linea):
     TaparElToken(TOKEN).filter(registro)
 
     assert TOKEN not in registro.getMessage()
+
+
+# -- Con los avisos por Google, el permiso se usa aunque no haya nada que avisar --
+
+
+def test_con_google_el_servidor_usa_el_permiso_al_arrancar(monkeypatch):
+    """Google borra el permiso que pasa seis meses sin usarse."""
+    from test_agente import agente_falso
+
+    avisos = Avisos(para="duenio@ejemplo.com", gmail_cliente="c", gmail_secreto="s", gmail_permiso="p")
+    usos = []
+    monkeypatch.setattr(avisos, "revisar", lambda: usos.append(1))
+
+    with cliente(ChatwootFalso(), agente_falso(["hola"]), avisos=avisos):
+        assert esperar(lambda: usos), "al arrancar se usa el permiso"
+
+
+def test_con_smtp_no_hay_nada_que_mantener(monkeypatch):
+    from test_agente import agente_falso
+
+    avisos = AvisosFalsos()
+    usos = []
+    monkeypatch.setattr(avisos, "revisar", lambda: usos.append(1))
+
+    with cliente(ChatwootFalso(), agente_falso(["hola"]), avisos=avisos):
+        esperar(lambda: usos, segundos=0.3)
+
+    assert usos == []
+
+
+def test_el_permiso_se_sigue_usando_aunque_una_vez_falle(caplog):
+    """Si Google no acepta el permiso, queda en el registro y se vuelve a probar."""
+    import logging
+
+    from agente.web.webhook import mantener_el_permiso
+
+    usos = []
+
+    class AvisosDeGoogle:
+        def revisar(self):
+            usos.append(1)
+            if len(usos) == 1:
+                raise RuntimeError("Google ya no acepta el permiso guardado")
+
+    async def correr():
+        tarea = asyncio.create_task(mantener_el_permiso(AvisosDeGoogle(), cada=0.01))
+        await asyncio.sleep(0.2)
+        tarea.cancel()
+
+    with caplog.at_level(logging.INFO, logger="agente.webhook"):
+        asyncio.run(correr())
+
+    assert len(usos) >= 2, "después de fallar, lo sigue intentando"
+    assert "NO van a salir" in caplog.text
+    assert "el permiso para mandar mails anda" in caplog.text

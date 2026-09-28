@@ -5,14 +5,26 @@ el cliente de un negocio no puede ser "AuthenticationError: invalid x-api-key".
 El error va a dos lugares donde sí sirve: una nota privada en la
 conversación de Chatwoot (la ve el equipo) y un mail al dueño del agente.
 
-El mail sale por SMTP, con la biblioteca estándar de Python: sin servicios
-nuevos ni dependencias. Con Gmail alcanza una "contraseña de aplicación".
+El mail sale de una de dos maneras:
 
-    AVISOS_EMAIL=vos@tuempresa.com
-    SMTP_SERVIDOR=smtp.gmail.com
-    SMTP_PUERTO=587
-    SMTP_USUARIO=la-cuenta-que-manda@gmail.com
-    SMTP_CLAVE=la-contraseña-de-aplicación
+  · Por Google (lo recomendado): con la Gmail API y un permiso de Google
+    Cloud que sirve solo para mandar (ver gmail.py). Lo conecta, una vez,
+    `python conectar_gmail.py`:
+
+        AVISOS_EMAIL=vos@tuempresa.com
+        GMAIL_CLIENT_ID=...
+        GMAIL_CLIENT_SECRET=...
+        GMAIL_REFRESH_TOKEN=...
+
+  · Por SMTP, si tu mail no es de Google (Outlook, Zoho, el de tu dominio):
+
+        AVISOS_EMAIL=vos@tuempresa.com
+        SMTP_SERVIDOR=smtp.tuproveedor.com
+        SMTP_PUERTO=587
+        SMTP_USUARIO=la-cuenta-que-manda@tuempresa.com
+        SMTP_CLAVE=...
+
+Si están las dos, va por Google.
 
 Dos cuidados:
 
@@ -28,9 +40,12 @@ from __future__ import annotations
 import logging
 import smtplib
 import ssl
+import threading
 import time
 from email.message import EmailMessage
 from typing import Callable
+
+from . import gmail
 
 registro = logging.getLogger("agente.avisos")
 
@@ -39,6 +54,10 @@ UNA_HORA = 60 * 60
 # Cuánto se espera al servidor de mail. Si tarda más, algo anda mal y no
 # vale la pena quedarse colgado: el aviso queda en el log.
 ESPERA_DEL_SERVIDOR = 20
+
+# El acceso de Google dura una hora: se pide uno nuevo un minuto antes, para
+# que no se venza en el camino.
+MARGEN_DEL_ACCESO = 60
 
 
 class Avisos:
@@ -51,6 +70,9 @@ class Avisos:
         puerto: int = 587,
         usuario: str = "",
         clave: str = "",
+        gmail_cliente: str = "",
+        gmail_secreto: str = "",
+        gmail_permiso: str = "",
         espera: float = UNA_HORA,
         reloj: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -58,13 +80,25 @@ class Avisos:
         self.servidor = (servidor or "").strip()
         self.puerto = int(puerto or 587)
         self.usuario = (usuario or "").strip()
-        # Google muestra la contraseña de aplicación en bloques de cuatro
-        # («abcd efgh ijkl mnop»): los espacios no son parte de la clave.
+        # Hay proveedores que muestran la clave en bloques («abcd efgh ijkl
+        # mnop»): los espacios no son parte de la clave.
         self.clave = (clave or "").replace(" ", "")
+        self.gmail_cliente = (gmail_cliente or "").strip()
+        self.gmail_secreto = (gmail_secreto or "").strip()
+        self.gmail_permiso = (gmail_permiso or "").strip()
         self.espera = espera
         self._reloj = reloj
         self._ultimo: dict[str, float] = {}
         self._callados: dict[str, int] = {}
+        # El acceso de Google se reusa mientras vale. El candado es porque los
+        # avisos salen desde hilos distintos (asyncio.to_thread).
+        self._acceso = ""
+        self._acceso_vence = 0.0
+        self._candado = threading.Lock()
+
+    def __repr__(self) -> str:
+        # A propósito sin las claves: un print(avisos) no puede mostrarlas.
+        return f"Avisos(para={self.para!r}, metodo={self.metodo!r}, activos={self.activos})"
 
     @classmethod
     def desde_config(cls, config) -> "Avisos":
@@ -74,6 +108,9 @@ class Avisos:
             puerto=config.smtp_puerto,
             usuario=config.smtp_usuario,
             clave=config.smtp_clave,
+            gmail_cliente=config.gmail_client_id,
+            gmail_secreto=config.gmail_client_secret,
+            gmail_permiso=config.gmail_refresh_token,
         )
 
     @classmethod
@@ -96,7 +133,45 @@ class Avisos:
             puerto=_entero("SMTP_PUERTO", 587),
             usuario=os.getenv("SMTP_USUARIO", ""),
             clave=os.getenv("SMTP_CLAVE", ""),
+            gmail_cliente=os.getenv("GMAIL_CLIENT_ID", ""),
+            gmail_secreto=os.getenv("GMAIL_CLIENT_SECRET", ""),
+            gmail_permiso=os.getenv("GMAIL_REFRESH_TOKEN", ""),
         )
+
+    @property
+    def metodo(self) -> str:
+        """Por dónde sale el mail: "google", "smtp", o "" si no hay nada cargado."""
+        if self.gmail_cliente or self.gmail_secreto or self.gmail_permiso:
+            return "google"
+        if self.servidor or self.usuario or self.clave:
+            return "smtp"
+        return ""
+
+    @property
+    def activos(self) -> bool:
+        """Si hay a quién avisar y por dónde mandarlo."""
+        return not self.faltan()
+
+    def faltan(self) -> list[str]:
+        """Las variables del .env que faltan para poder mandar un aviso.
+
+        Sin nada cargado, pide las de Google: es el camino recomendado.
+        """
+        if self.metodo == "smtp":
+            datos = {
+                "AVISOS_EMAIL": self.para,
+                "SMTP_SERVIDOR": self.servidor,
+                "SMTP_USUARIO": self.usuario,
+                "SMTP_CLAVE": self.clave,
+            }
+        else:
+            datos = {
+                "AVISOS_EMAIL": self.para,
+                "GMAIL_CLIENT_ID": self.gmail_cliente,
+                "GMAIL_CLIENT_SECRET": self.gmail_secreto,
+                "GMAIL_REFRESH_TOKEN": self.gmail_permiso,
+            }
+        return [nombre for nombre, valor in datos.items() if not valor]
 
     def probar(self) -> None:
         """Manda un mail de prueba YA, sin esperar ni agrupar.
@@ -116,20 +191,19 @@ class Avisos:
             "Del mismo error, uno por hora como mucho.",
         )
 
-    @property
-    def activos(self) -> bool:
-        """Si hay a quién avisar y por dónde mandarlo."""
-        return not self.faltan()
+    def revisar(self) -> None:
+        """Usa el permiso de Google aunque no haya nada que avisar.
 
-    def faltan(self) -> list[str]:
-        """Las variables del .env que faltan para poder mandar un aviso."""
-        datos = {
-            "AVISOS_EMAIL": self.para,
-            "SMTP_SERVIDOR": self.servidor,
-            "SMTP_USUARIO": self.usuario,
-            "SMTP_CLAVE": self.clave,
-        }
-        return [nombre for nombre, valor in datos.items() if not valor]
+        Google borra el permiso que pasa seis meses sin usarse, y un agente
+        que anda bien puede pasar seis meses sin mandar un aviso: el primero
+        que hiciera falta no saldría. El webhook llama a esto al arrancar y
+        una vez por día; de paso, si el permiso ya no vale, queda escrito en
+        el registro del servidor. Con SMTP no hace nada.
+
+        Levanta el error: el que llama decide qué hacer con él.
+        """
+        if self.metodo == "google" and self.activos:
+            self._acceso_de_google(renovar=True)
 
     def avisar(self, asunto: str, cuerpo: str, tipo: str) -> bool:
         """Manda el aviso si corresponde. Devuelve True si salió un mail.
@@ -174,10 +248,39 @@ class Avisos:
     def _enviar(self, asunto: str, cuerpo: str) -> None:
         mensaje = EmailMessage()
         mensaje["Subject"] = asunto
-        mensaje["From"] = self.usuario or self.para
         mensaje["To"] = self.para
-        mensaje.set_content(cuerpo)
 
+        if self.metodo == "google":
+            # Sin From: Google pone la cuenta que dio el permiso, y no deja
+            # mandar como otra.
+            mensaje.set_content(cuerpo)
+            try:
+                gmail.mandar(self._acceso_de_google(), bytes(mensaje))
+            except gmail.ErrorDeGoogle as e:
+                if e.codigo == 401:
+                    # El acceso guardado ya no vale: que el próximo pida otro.
+                    with self._candado:
+                        self._acceso = ""
+                raise
+            return
+
+        mensaje["From"] = self.usuario or self.para
+        mensaje.set_content(cuerpo)
+        self._enviar_por_smtp(mensaje)
+
+    def _acceso_de_google(self, renovar: bool = False) -> str:
+        """El acceso de una hora para mandar: el guardado, o uno nuevo si venció."""
+        with self._candado:
+            ahora = self._reloj()
+            if renovar or not self._acceso or ahora >= self._acceso_vence:
+                acceso, dura = gmail.renovar_acceso(
+                    self.gmail_cliente, self.gmail_secreto, self.gmail_permiso
+                )
+                self._acceso = acceso
+                self._acceso_vence = ahora + max(dura - MARGEN_DEL_ACCESO, 0)
+            return self._acceso
+
+    def _enviar_por_smtp(self, mensaje: EmailMessage) -> None:
         # El contexto que VERIFICA el certificado y el nombre del servidor.
         # Sin él, Python cifra igual pero le cree a cualquiera: alguien en el
         # medio de la red (un wifi, un DNS falso) se queda con la clave.

@@ -116,6 +116,37 @@ CAUSA_MODELO = (
 )
 CAUSA_CHATWOOT = "Chatwoot: revisá CHATWOOT_URL y CHATWOOT_TOKEN en el servidor."
 
+UNA_HORA = 60 * 60
+UN_DIA = 24 * UNA_HORA
+
+
+async def mantener_el_permiso(avisos: Avisos, cada: float = UN_DIA) -> None:
+    """Con los avisos por Google, usa el permiso al arrancar y una vez por día.
+
+    Google borra el permiso que pasa seis meses sin usarse, y si el agente
+    anda bien no manda ningún aviso: el día que hiciera falta, no saldría.
+    Si el permiso no vale, queda en el registro (no hay mail que mandar:
+    el mail es justamente lo que está roto) y se vuelve a probar en una
+    hora: puede haber sido la red en el momento de arrancar.
+    """
+    anduvo = None
+    while True:
+        try:
+            await asyncio.to_thread(avisos.revisar)
+            if anduvo is not True:
+                registro.info("Avisos por Google: el permiso para mandar mails anda.")
+            anduvo = True
+        except Exception as e:
+            registro.error("Los avisos por mail NO van a salir: %s", e)
+            anduvo = False
+        await asyncio.sleep(cada if anduvo else min(cada, UNA_HORA))
+
+
+def _como_avisa(avisos: Avisos) -> str:
+    if not avisos.activos:
+        return "apagados"
+    return "por Google" if avisos.metodo == "google" else "por SMTP"
+
 
 def validar_token(token: str) -> None:
     """Frena el arranque si el token del webhook no sirve.
@@ -341,9 +372,16 @@ def crear_app(
             config.buffer_segundos,
             config.mensajes_por_respuesta,
             config.tope_mensajes_por_dia or "sin",
-            "prendidos" if avisos.activos else "apagados",
+            _como_avisa(avisos),
+        )
+        cuidar_el_permiso = (
+            asyncio.create_task(mantener_el_permiso(avisos))
+            if avisos.activos and avisos.metodo == "google"
+            else None
         )
         yield
+        if cuidar_el_permiso is not None:
+            cuidar_el_permiso.cancel()
         # Al apagar, soltamos lo que estaba esperando y esperamos (un rato)
         # lo que corría en segundo plano. Sin esto, un deploy justo en esos
         # segundos se come la ráfaga de alguien o lo deja sin la etiqueta.

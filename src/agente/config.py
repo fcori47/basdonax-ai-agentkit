@@ -87,6 +87,11 @@ class Config:
 
     # -- Avisos por mail cuando algo se rompe: lo pregunta la instalación ----
     avisos_email: str = ""
+    # Por Google (lo recomendado): los tres los deja conectar_gmail.py.
+    gmail_client_id: str = ""
+    gmail_client_secret: str = field(default="", repr=False)
+    gmail_refresh_token: str = field(default="", repr=False)
+    # O por SMTP, si el mail no es de Google.
     smtp_servidor: str = ""
     smtp_puerto: int = 587
     smtp_usuario: str = ""
@@ -177,6 +182,9 @@ class Config:
             tope_mensajes_por_dia=tope_mensajes_por_dia,
             largo_maximo_de_entrada=largo_maximo_de_entrada,
             avisos_email=(os.getenv("AVISOS_EMAIL") or "").strip(),
+            gmail_client_id=(os.getenv("GMAIL_CLIENT_ID") or "").strip(),
+            gmail_client_secret=(os.getenv("GMAIL_CLIENT_SECRET") or "").strip(),
+            gmail_refresh_token=(os.getenv("GMAIL_REFRESH_TOKEN") or "").strip(),
             smtp_servidor=(os.getenv("SMTP_SERVIDOR") or "").strip(),
             smtp_puerto=_entero("SMTP_PUERTO", 587),
             smtp_usuario=(os.getenv("SMTP_USUARIO") or "").strip(),

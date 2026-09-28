@@ -4,11 +4,11 @@
 
 Es el último paso de la instalación: si este mail llega, los avisos de
 cuando algo se rompe también van a llegar. Mejor enterarse hoy que el día
-que se vence una clave. Se corre donde corre el agente (en el servidor): en
-tu computadora prueba la clave, no que el servidor pueda mandar mails.
+que se vence un permiso. Se corre donde corre el agente (en el servidor): en
+tu computadora prueba los datos, no que el servidor pueda mandar mails.
 
-Solo lee lo del mail (AVISOS_EMAIL y SMTP_*): no hace falta tener cargada
-la clave del modelo para probarlo.
+Solo lee lo del mail (AVISOS_EMAIL y GMAIL_* o SMTP_*): no hace falta tener
+cargada la clave del modelo para probarlo.
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ preparar()  # antes de imprimir nada, para que las tildes no rompan Windows
 
 from agente.avisos import Avisos  # noqa: E402
 from agente.config import ErrorDeConfiguracion  # noqa: E402
+from agente.gmail import ErrorDeGoogle  # noqa: E402
 
 VERDE = "\033[92m"
 GRIS = "\033[90m"
@@ -42,37 +43,45 @@ def main() -> int:
         print(f"{ROJO}{e}{FIN}")
         return 1
 
+    por_google = avisos.metodo != "smtp"
     print(f"\nMandando un mail de prueba a {avisos.para or '(sin AVISOS_EMAIL)'}")
-    print(f"{GRIS}   por {avisos.servidor or '(sin SMTP_SERVIDOR)'}:{avisos.puerto}"
-          f" con {avisos.usuario or '(sin usuario)'}{FIN}\n")
+    if por_google:
+        print(f"{GRIS}   por Google (Gmail API, con el permiso de Google Cloud){FIN}\n")
+    else:
+        print(f"{GRIS}   por SMTP: {avisos.servidor or '(sin SMTP_SERVIDOR)'}:{avisos.puerto}"
+              f" con {avisos.usuario or '(sin usuario)'}{FIN}\n")
 
     try:
         avisos.probar()
     except ValueError as e:
         print(f"{ROJO}{e}{FIN}")
+        if por_google and any(v.startswith("GMAIL_") for v in avisos.faltan()):
+            print("Los tres GMAIL_* los deja python conectar_gmail.py, corrido en tu "
+                  "computadora (abre el navegador). Después se copian al servidor.")
+        return 1
+    except ErrorDeGoogle as e:
+        # Ya viene en castellano y con lo que hay que hacer (ver gmail.py).
+        print(f"{ROJO}{e}{FIN}")
         return 1
     except ssl.SSLCertVerificationError:
         # Antes que OSError (es uno de ellos): es la protección haciendo su
         # trabajo, no un problema de red.
-        print(f"{ROJO}El certificado del servidor de mail no es válido para "
-              f"{avisos.servidor}.{FIN}")
-        print("Revisá SMTP_SERVIDOR (con Gmail: smtp.gmail.com). Si el nombre está bien, "
-              "alguien en el medio de la red puede estar haciéndose pasar por el servidor: "
-              "por eso no se mandó la clave.")
+        destino = "Google" if por_google else avisos.servidor
+        print(f"{ROJO}El certificado del servidor no es válido para {destino}.{FIN}")
+        if not por_google:
+            print("Revisá SMTP_SERVIDOR. ", end="")
+        print("Si está todo bien escrito, alguien en el medio de la red puede estar "
+              "haciéndose pasar por el servidor: por eso no se mandó nada.")
         return 1
     except smtplib.SMTPServerDisconnected:
         print(f"{ROJO}{avisos.servidor}:{avisos.puerto} aceptó la conexión pero no "
               f"contestó.{FIN}")
-        print("Revisá SMTP_PUERTO (con Gmail: 587) y que el servidor pueda salir por ese puerto.")
+        print("Revisá SMTP_PUERTO (suele ser 587) y que el servidor pueda salir por ese puerto.")
         return 1
     except smtplib.SMTPAuthenticationError:
-        # El caso de casi todos la primera vez: pusieron su contraseña de
-        # siempre y Gmail no la acepta para esto.
         print(f"{ROJO}El servidor de mail no aceptó el usuario o la clave.{FIN}")
-        print("Con Gmail, SMTP_CLAVE tiene que ser una contraseña de aplicación "
-              "(16 letras, sin espacios), no tu contraseña de siempre.")
-        print("Se crea en https://myaccount.google.com/apppasswords "
-              "(hace falta tener la verificación en dos pasos activada).")
+        print("Revisá SMTP_USUARIO y SMTP_CLAVE. Si tu mail es de Google (Gmail o "
+              "Workspace), no va por SMTP: conectalo con python conectar_gmail.py.")
         return 1
     except smtplib.SMTPException as e:
         # Antes que OSError: en Python los errores de SMTP SON OSError, y si
@@ -80,10 +89,21 @@ def main() -> int:
         print(f"{ROJO}El servidor de mail contestó un error:{FIN} {e}")
         return 1
     except (socket.gaierror, ConnectionError, TimeoutError, OSError) as e:
-        print(f"{ROJO}No se pudo conectar con {avisos.servidor}:{avisos.puerto}.{FIN}")
-        print(f"{GRIS}{type(e).__name__}: {e}{FIN}")
-        print("Revisá SMTP_SERVIDOR y SMTP_PUERTO (con Gmail: smtp.gmail.com y 587). "
-              "Si esto corre en un servidor, puede ser que tenga cerrada la salida por ese puerto.")
+        if por_google and isinstance(getattr(e, "reason", None), ssl.SSLCertVerificationError):
+            # urllib envuelve el error del certificado: es el mismo caso de arriba.
+            print(f"{ROJO}El certificado no es válido para Google.{FIN}")
+            print("Alguien en el medio de la red puede estar haciéndose pasar por Google "
+                  "(o hay un proxy que intercepta): por eso no se mandó nada.")
+        elif por_google:
+            print(f"{ROJO}No se pudo conectar con Google.{FIN}")
+            print(f"{GRIS}{type(e).__name__}: {e}{FIN}")
+            print("Revisá que el servidor tenga salida a internet por HTTPS "
+                  "(oauth2.googleapis.com y gmail.googleapis.com, puerto 443).")
+        else:
+            print(f"{ROJO}No se pudo conectar con {avisos.servidor}:{avisos.puerto}.{FIN}")
+            print(f"{GRIS}{type(e).__name__}: {e}{FIN}")
+            print("Revisá SMTP_SERVIDOR y SMTP_PUERTO. Si esto corre en un servidor, "
+                  "puede ser que tenga cerrada la salida por ese puerto.")
         return 1
 
     print(f"{VERDE}Mail mandado.{FIN} Fijate en {avisos.para} "
