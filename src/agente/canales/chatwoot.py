@@ -312,7 +312,9 @@ class Chatwoot(Canal):
         publique sus archivos con otro dominio que el que usa el agente.
         """
         partes = urllib.parse.urlsplit(direccion or "")
-        if not partes.path.startswith("/rails/active_storage/"):
+        # Con «..» el camino puede salir de /rails/active_storage/ una vez que
+        # el servidor lo acomoda: sigue siendo tu Chatwoot, pero otra página.
+        if not partes.path.startswith("/rails/active_storage/") or ".." in partes.path:
             raise ErrorDeChatwoot("Ese adjunto no apunta a un archivo de Chatwoot: no lo bajo.")
         url = self.url + partes.path + (f"?{partes.query}" if partes.query else "")
 

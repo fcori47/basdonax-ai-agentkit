@@ -967,6 +967,8 @@ def test_una_direccion_que_no_es_de_un_archivo_de_chatwoot_no_se_baja(monkeypatc
 
     with pytest.raises(chatwoot_mod.ErrorDeChatwoot):
         ChatwootFalso().bajar("http://169.254.169.254/latest/meta-data/", 1024)
+    with pytest.raises(chatwoot_mod.ErrorDeChatwoot):
+        ChatwootFalso().bajar("https://x.com/rails/active_storage/../../app/login", 1024)
     assert abridor.pedidos == []
 
 
