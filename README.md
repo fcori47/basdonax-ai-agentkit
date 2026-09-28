@@ -33,10 +33,12 @@ vos te llega un mail.
    descomprimilo.
 2. Abrí esa carpeta con Claude Code y decile: **«ayudame a instalar el agente
    para WhatsApp»**.
-3. Antes de tocar nada te hace cuatro preguntas: si responde como una persona
+3. Antes de tocar nada te hace seis preguntas: si responde como una persona
    o en un solo mensaje, si tenés la tarjeta cargada en Meta, cuántos mensajes
-   de una misma persona atiende por día y a qué mail te avisa si algo se
-   rompe. Lo que no tengas hecho, te guía hasta que quede.
+   de una misma persona atiende por día, a qué mail te avisa si algo se
+   rompe, si resolver una conversación lo calla con esa persona y si atiende
+   toda la charla o solo el primer mensaje. Lo que no tengas hecho, te guía
+   hasta que quede.
 4. Cierra con un mail de prueba desde el servidor: si llega, los avisos
    funcionan.
 
@@ -67,13 +69,15 @@ Para WhatsApp vas a necesitar:
 11. [El caché: gastar menos](#el-caché-gastar-menos)
 12. [El clima: la primera herramienta](#el-clima-la-primera-herramienta)
 13. [Ponerlo en Telegram](#ponerlo-en-telegram)
-14. [Cuatro decisiones antes de desplegar](#cuatro-decisiones-antes-de-desplegar)
-15. [Ponerlo en WhatsApp](#ponerlo-en-whatsapp)
-16. [Dejarlo corriendo en un servidor](#dejarlo-corriendo-en-un-servidor)
-17. [Cambiar la personalidad](#cambiar-la-personalidad)
-18. [Usarlo desde tu código](#usarlo-desde-tu-código)
-19. [Todas las variables del .env](#todas-las-variables-del-env)
-20. [Preguntas que aparecen siempre](#preguntas-que-aparecen-siempre)
+14. [Seis decisiones antes de desplegar](#seis-decisiones-antes-de-desplegar)
+15. [Lo que entiende: fotos, audios, ubicaciones](#lo-que-entiende-fotos-audios-ubicaciones)
+16. [Que parezca una persona](#que-parezca-una-persona)
+17. [Ponerlo en WhatsApp](#ponerlo-en-whatsapp)
+18. [Dejarlo corriendo en un servidor](#dejarlo-corriendo-en-un-servidor)
+19. [Cambiar la personalidad](#cambiar-la-personalidad)
+20. [Usarlo desde tu código](#usarlo-desde-tu-código)
+21. [Todas las variables del .env](#todas-las-variables-del-env)
+22. [Preguntas que aparecen siempre](#preguntas-que-aparecen-siempre)
 
 ---
 
@@ -83,11 +87,22 @@ Para WhatsApp vas a necesitar:
   uno. Lo pregunta la instalación y te explica lo que cuesta cada opción.
 - **Tope de mensajes por conversación y por día:** el que charla de cualquier
   cosa pasa a una persona del equipo y el agente deja de gastar.
+- **Entiende todo lo que llega por WhatsApp:** fotos (también con texto y
+  stickers), audios, ubicaciones, contactos compartidos y respuestas citando
+  un mensaje. Los PDF y los videos no los abre, pero sabe que llegaron y
+  pregunta. Antes, todo lo que no era texto se quedaba sin respuesta.
+  [Está más abajo](#lo-que-entiende-fotos-audios-ubicaciones).
 - **Si algo se rompe, el cliente no ve el error:** la conversación pasa a una
-  persona, queda una nota privada en Chatwoot y te llega un mail. El mail
-  sale con **Google Cloud**, con un permiso que solo deja mandar: el agente no
-  puede leer tu casilla. `python conectar_gmail.py` conecta la cuenta y
-  `python probar_mail.py` lo prueba antes de dar la instalación por terminada.
+  persona (la etiqueta) y te llega un mail. El mail sale con **Google Cloud**,
+  con un permiso que solo deja mandar: el agente no puede leer tu casilla.
+  `python conectar_gmail.py` conecta la cuenta y `python probar_mail.py` lo
+  prueba antes de dar la instalación por terminada.
+- **No pisa al equipo:** justo antes de contestar vuelve a mirar la charla. Si
+  alguien le puso `humano` o la resolvió mientras tanto, no contesta.
+- **Resolver es decidir** (se elige al instalar): si resolvés una conversación,
+  el agente no le vuelve a hablar a esa persona.
+- **Ritmo de persona:** una pausa entre globo y globo y, con los datos de Meta,
+  el visto azul y el «escribiendo…» en el celular de la persona.
 - **Más seguro:** la clave del webhook ya no queda en los registros del
   servidor y tiene que ser larga (si no, el agente no arranca); un pedido de
   más de medio mega se descarta sin terminar de leerlo; un texto pegado enorme
@@ -99,7 +114,7 @@ Para WhatsApp vas a necesitar:
   viene en este repo. [Está más abajo](#tu-agente-está-en-n8n-hay-un-actualizador).
 
 <p align="center">
-  <img src="docs/img/cuando-se-rompe.png" alt="Cuando algo se rompe: el cliente no ve el error, queda una nota privada y te llega un mail" width="100%">
+  <img src="docs/img/cuando-se-rompe.png" alt="Cuando algo se rompe: el cliente no ve el error, la conversación pasa a una persona y te llega un mail" width="100%">
 </p>
 
 ---
@@ -144,7 +159,7 @@ cuesta menos. En respuestas cortas, un mensaje con saltos de línea se lee
 bien; en las largas, un solo bloque se parece más a un mail. **Lo elegís al
 instalar** (`MENSAJES_POR_RESPUESTA`). En el mismo momento se revisa la
 tarjeta y se definen el tope de mensajes por día y el mail de avisos: está
-todo en [Cuatro decisiones antes de desplegar](#cuatro-decisiones-antes-de-desplegar).
+todo en [Seis decisiones antes de desplegar](#seis-decisiones-antes-de-desplegar).
 
 ---
 
@@ -170,7 +185,7 @@ pregunta primero dónde está tu agente y sigue el camino que corresponde:
 |---|---|
 | **En n8n, con una clave de la API** | Busca los flujos con Format Chain, respalda cada uno, le pone la versión nueva (o, si la tocaste, le agrega solo la elección sin tocar tus filtros), verifica y lo publica |
 | **En n8n, pero preferís no crear una clave** | Te guía paso a paso adentro de n8n: duplicar el flujo, pegar el código, elegir, guardar y publicar |
-| **En este kit** | Trae la versión nueva sin pisar tu `.env` ni tu prompt, y te hace las cuatro preguntas de la instalación |
+| **En este kit** | Trae la versión nueva sin pisar tu `.env` ni tu prompt, y te hace las seis preguntas de la instalación |
 | **Todavía no lo armaste** | Te explica el cambio y te guía para cargar la tarjeta en Meta |
 
 En todos los casos te explica qué cambia, te pregunta cómo querés que
@@ -273,6 +288,8 @@ basdonax-ai-agentkit/
 │   │   ├── base.py         ← la forma de un canal
 │   │   ├── telegram.py     ← EL BOT DE TELEGRAM
 │   │   ├── chatwoot.py     ← EL CANAL DE WHATSAPP
+│   │   ├── adjuntos.py     ← fotos, audios, ubicaciones y citas, a texto
+│   │   ├── whatsapp_meta.py ← el visto azul y los puntitos en el celular
 │   │   └── buffer.py       ← junta los mensajes cortos seguidos
 │   └── web/
 │       ├── app.py          ← la plataforma de pruebas
@@ -591,13 +608,13 @@ es un archivo y no le gusta que varios procesos le escriban al mismo tiempo.
 - **Contesta en varios mensajitos**, no en un ladrillo (`partir_respuesta`).
 - **No contesta dos veces lo mismo.** Telegram reenvía cuando duda.
 - **Muestra "escribiendo…"** mientras el modelo piensa.
-- **Las fotos y los audios los deja pasar** sin trabarse: el agente todavía no
-  sabe leerlos.
+- **Las fotos y los audios los deja pasar** sin trabarse: en Telegram todavía
+  no los lee (el canal de WhatsApp, sí).
 - **Un error con una persona no voltea el bot** ni deja sin respuesta al resto.
 
 ---
 
-## Cuatro decisiones antes de desplegar
+## Seis decisiones antes de desplegar
 
 Si lo instalás con Claude Code, te las pregunta él y te guía en lo que
 falte. Si lo hacés a mano, son estas.
@@ -652,9 +669,8 @@ Hay gente que se queda charlando de cualquier cosa con el agente, y cada
 respuesta se paga. Se cuentan los mensajes que **manda la persona** en esa
 conversación, en las últimas 24 horas, no las respuestas: el que escribe en
 ráfagas («hola» / «una consulta» / «por el precio») suma tres aunque el agente
-conteste una vez. Al pasar el tope, el agente le pone la etiqueta `humano`,
-deja una nota privada contando por qué y se calla ahí. **No se destraba solo
-al otro día:** vuelve a contestar cuando alguien del equipo le saca la
+conteste una vez. Al pasar el tope, el agente le pone la etiqueta `humano`
+y se calla ahí. **No se destraba solo al otro día:** vuelve a contestar cuando alguien del equipo le saca la
 etiqueta.
 
 ```bash
@@ -669,8 +685,8 @@ también un tope de gasto en la consola del proveedor del modelo.
 
 Si falla el modelo (una clave vencida, sin saldo) o Chatwoot no acepta la
 respuesta, **la persona que escribió no ve ningún error**: la conversación
-pasa a `humano`, queda una nota privada con el error y te llega un mail. De un
-mismo error sale un mail por hora como mucho, no uno por cada persona.
+pasa a `humano` y te llega un mail con el error. De un mismo error sale un mail
+por hora como mucho, no uno por cada persona.
 
 El mail sale de una cuenta de Google (Gmail o Workspace) **con un permiso de
 Google Cloud que sirve solo para mandar**: el agente no puede leer ni borrar
@@ -744,6 +760,100 @@ Si el mail llega desde ahí, los avisos también. Probarlo en tu computadora
 sirve para revisar los datos, pero no prueba que el servidor pueda mandar
 mails. Si falla, el script te dice qué pasó y qué hacer.
 
+**5. ¿Resolver una conversación calla al agente con esa persona?**
+
+Si en tu equipo resolver una conversación quiere decir «con esta persona ya
+terminé», el agente lo respeta: no le vuelve a hablar, aunque escriba días
+después. La conversación queda con la etiqueta `humano` y aparece en tu
+bandeja. Para que la vuelva a atender, reabrila y sacale la etiqueta.
+
+Si en tu equipo se resuelve de rutina (todo lo que ya se contestó), dejalo
+apagado: si no, el agente se calla con los clientes que vuelven.
+
+```bash
+# 1 = resolver calla al agente con esa persona · 0 = resolver no cambia nada
+RESPETAR_RESUELTAS=1
+```
+
+Anda con las dos formas de Chatwoot, la que reabre la misma conversación y
+la que abre una nueva. Para la primera, el webhook tiene que avisar también
+los cambios de estado (está en «El webhook, en Chatwoot», más abajo).
+
+**6. ¿Atiende toda la charla o solo el primer mensaje?**
+
+Por defecto atiende toda la charla. Si preferís que el agente abra la
+conversación y la siga alguien del equipo, contesta el primer mensaje y le
+pone la etiqueta `humano`: desde ahí no vuelve a hablar en esa conversación.
+
+```bash
+# 0 = toda la charla · 1 = solo el primer mensaje
+SOLO_EL_PRIMER_MENSAJE=0
+```
+
+---
+
+## Lo que entiende: fotos, audios, ubicaciones
+
+En WhatsApp la gente no solo escribe: manda audios, fotos, la ubicación,
+contesta citando un mensaje. El agente convierte cada cosa en texto antes de
+pensar la respuesta, y en la memoria queda ese texto:
+
+| Llega | Lo que lee el agente |
+|---|---|
+| Un audio | Lo que dice, transcripto (con una clave de OpenAI) |
+| Una foto o un sticker | Qué se ve, descripto por el mismo modelo del agente, y el texto que tenga abajo |
+| Una ubicación | El nombre del lugar y el link al mapa |
+| Un contacto compartido | El nombre y el teléfono |
+| Un PDF, un archivo o un video | Que llegó, para que pregunte de qué se trata: no los abre |
+| Una respuesta citando un mensaje | Lo que se citó: el texto, el audio transcripto o la foto descripta |
+
+- **Las fotos no piden otra clave:** Claude, OpenAI y Gemini ven imágenes.
+  Cada foto es una llamada al modelo; si querés que la describa uno más
+  barato del mismo proveedor, ponelo en `MODELO_IMAGENES`.
+- **Los audios los transcribe OpenAI**, aunque el agente use otro proveedor:
+  hace falta `OPENAI_API_KEY`. Sin ella, un audio no queda sin respuesta: la
+  conversación pasa a `humano` y lo atiende alguien del equipo.
+- **Nada de esto frena al resto:** bajar y leer una foto o un audio pasa en
+  segundo plano, y en su lugar de la ráfaga (si mandan la foto y después
+  «¿cuánto sale?», el agente las lee en ese orden).
+- **Solo se baja de tu Chatwoot,** con tope de tamaño. De la dirección del
+  archivo se usa solo el camino y se pide siempre a `CHATWOOT_URL`.
+- Si algo no se puede leer, el agente se entera y le pide a la persona que lo
+  cuente; si fue un error (una clave vencida, por ejemplo), te llega por mail.
+
+```bash
+DESCRIBIR_IMAGENES=1        # 0 = las fotos no se leen: el agente pregunta qué son
+TRANSCRIBIR_AUDIOS=1        # 0 = los audios pasan a una persona
+MODELO_IMAGENES=            # vacío = el mismo modelo del agente
+MODELO_TRANSCRIPCION=gpt-4o-mini-transcribe
+```
+
+---
+
+## Que parezca una persona
+
+Tres globos que caen en el mismo segundo se leen como un bot, aunque el texto
+sea perfecto. Por eso:
+
+- **Entre globo y globo hay una pausa** de lo que tardaría alguien en
+  tipearlo (de 1,4 a 7 segundos), con el «escribiendo…» prendido
+  (`PAUSA_ENTRE_GLOBOS=1`).
+- **El visto azul y los puntitos en el celular de la persona.** Chatwoot no
+  los pasa a WhatsApp: hay que pedírselos a Meta, y para eso van dos datos de
+  tu cuenta de WhatsApp Business, los mismos que usa Chatwoot. Sin ellos todo
+  anda igual, sin el visto. No cuentan como mensaje: Meta no los cobra.
+- **Una espera antes de contestar** (apagada): un rato de silencio y después
+  los puntitos, como alguien que estaba en otra cosa. Contestar al instante
+  cada vez también delata al bot.
+
+```bash
+PAUSA_ENTRE_GLOBOS=1
+WHATSAPP_TOKEN=               # el token de tu cuenta de WhatsApp Business en Meta
+WHATSAPP_PHONE_NUMBER_ID=     # el id del número (solo dígitos: no es el teléfono)
+ESPERA_SEGUNDOS=0             # la espera total antes de contestar (0 = apagada)
+SILENCIO_SEGUNDOS=25          # cuánto de esa espera va sin puntitos
+```
+
 ---
 
 ## Ponerlo en WhatsApp
@@ -799,7 +909,7 @@ CHATWOOT_WEBHOOK_TOKEN=un-secreto-largo-y-al-azar
   python -c "import secrets; print(secrets.token_hex(24))"
   ```
 
-Y antes de desplegar, las [cuatro decisiones](#cuatro-decisiones-antes-de-desplegar):
+Y antes de desplegar, las [seis decisiones](#seis-decisiones-antes-de-desplegar):
 cómo responde, la tarjeta en Meta, el tope de mensajes por día y el mail de
 avisos.
 
@@ -822,12 +932,14 @@ En **Configuración → Integraciones → Webhooks → Agregar webhook**:
 | Campo | Qué va |
 |---|---|
 | URL | `https://tu-dominio.com/chatwoot/<CHATWOOT_WEBHOOK_TOKEN>` |
-| Eventos | **Solo `message_created`** |
+| Eventos | **`message_created`**, y **`conversation_status_changed`** si elegiste que resolver calle al agente |
 
 Dos avisos que valen el rato que ahorran:
 
-**Marcá únicamente `message_created`.** Si tildás todos, tu servidor recibe
-cada cambio de estado y cada actualización de contacto para nada.
+**Marcá solo esos.** Si tildás todos, tu servidor recibe cada actualización de
+contacto y de conversación para nada. El del estado hace falta para la
+decisión 5: si tu bandeja reabre la misma conversación cuando alguien vuelve a
+escribir, es la única forma de enterarse de que la habías resuelto.
 
 **El token va pegado en la URL, no en un campo aparte.** Chatwoot no firma sus
 webhooks —no tiene un secreto compartido como Meta—, así que esa tira en la
@@ -845,9 +957,11 @@ se calla en ese chat**. Es el traspaso a una persona, y es *el* diferencial de
 tener Chatwoot — se hace con un clic, sin tocar el servidor ni reiniciar nada.
 Se la sacás y el bot vuelve.
 
-El agente también se la pone solo en dos casos: **cuando algo se rompe** y
-**cuando alguien pasa el tope de mensajes del día**. En los dos deja una nota
-privada en la conversación diciendo por qué.
+El agente también se la pone solo: **cuando algo se rompe**, **cuando
+alguien pasa el tope de mensajes del día**, cuando llega un audio y no tiene
+cómo escucharlo y, según lo que elegiste al instalar, cuando resolvés una
+conversación o después de contestar el primer mensaje. Lo que pasó queda en
+los registros del servidor, y si fue un error, te llega por mail.
 
 Ojo con los cortes: si se vence la clave o se acaba el saldo, cada
 conversación que escriba en ese rato queda con `humano`. Cuando lo arregles,
@@ -861,6 +975,17 @@ la bandeja de Chatwoot.
 
 Si no contesta, mirá los registros del contenedor (en Coolify, *Logs*): cada
 mensaje que entra deja una línea con el número de conversación y el texto.
+
+Para volver a probar desde cero con la misma conversación, borrale la memoria
+(el número sale de la dirección de la conversación en Chatwoot):
+
+```bash
+curl -X POST https://tu-dominio.com/reset/<CHATWOOT_WEBHOOK_TOKEN> \
+     -H "Content-Type: application/json" -d '{"conversacion": "12"}'
+```
+
+De a una conversación por vez, a propósito: borrar todas de un saque, con
+gente de verdad adentro, no tiene vuelta atrás.
 
 ### Lo que ya está resuelto
 
@@ -876,8 +1001,15 @@ mensaje que entra deja una línea con el número de conversación y el texto.
 - **No contesta las notas privadas**: esas son del equipo.
 - **Cada conversación tiene su memoria**, con el id de Chatwoot como
   `thread_id`.
-- **El cliente nunca ve un error técnico.** Va a la nota privada y a tu mail,
-  y la conversación pasa a una persona.
+- **El cliente nunca ve un error técnico.** Te llega a vos por mail, y la
+  conversación pasa a una persona.
+- **Entiende fotos, audios, ubicaciones, contactos y citas**: ver
+  [Lo que entiende](#lo-que-entiende-fotos-audios-ubicaciones).
+- **No pisa al equipo:** justo antes de pensar la respuesta, y otra vez antes
+  de mandarla, mira si alguien le puso `humano` o la resolvió mientras tanto.
+- **Contesta como una persona:** pausa entre globos, y el visto azul y los
+  puntitos en el celular si cargás los datos de Meta (ver
+  [Que parezca una persona](#que-parezca-una-persona)).
 - **Tope de mensajes por conversación y por día** (`TOPE_MENSAJES_POR_DIA`),
   para el que se queda charlando de cualquier cosa.
 - **Un texto pegado enorme se recorta** a 2.000 caracteres antes de llegar al
@@ -933,15 +1065,21 @@ docker run -d --env-file .env -p 8000:8000 --name agente agente
    CHATWOOT_URL · CHATWOOT_TOKEN · CHATWOOT_CUENTA_ID
    CHATWOOT_WEBHOOK_TOKEN · CHATWOOT_ETIQUETA_HUMANO · BUFFER_SEGUNDOS
    MENSAJES_POR_RESPUESTA · TOPE_MENSAJES_POR_DIA · LARGO_MAXIMO_DE_ENTRADA
+   RESPETAR_RESUELTAS · SOLO_EL_PRIMER_MENSAJE
    AVISOS_EMAIL · GMAIL_CLIENT_ID · GMAIL_CLIENT_SECRET · GMAIL_REFRESH_TOKEN
    ```
 
-   Esos dos últimos renglones son las cuatro decisiones: si falta
-   `TOPE_MENSAJES_POR_DIA`, el agente queda sin tope, y si falta
+   Los tres últimos renglones son las seis decisiones: si falta
+   `TOPE_MENSAJES_POR_DIA`, el agente queda sin tope; si falta
+   `RESPETAR_RESUELTAS`, resolver no cambia nada, y si falta
    `AVISOS_EMAIL`, no te llega ningún mail. Las tres `GMAIL_*` las copiás
    de tu `.env` (las dejó ahí `conectar_gmail.py`). Si tu mail no es de
    Google, en su lugar van `SMTP_SERVIDOR · SMTP_PUERTO · SMTP_USUARIO ·
    SMTP_CLAVE`.
+
+   Para que entienda audios va también `OPENAI_API_KEY` (aunque el agente use
+   otro proveedor), y para el visto azul, `WHATSAPP_TOKEN` y
+   `WHATSAPP_PHONE_NUMBER_ID`.
 
 6. Desplegá, y entrá a `https://tu-dominio.com/salud` para confirmar.
 
@@ -1084,6 +1222,17 @@ Y estas, solo si vas a atender WhatsApp con `webhook_chatwoot.py`:
 | `MENSAJES_POR_RESPUESTA` | `3` | De `1` (todo en un mensaje) a `5`. `3` = como una persona, en varios globos. Meta cobra por mensaje |
 | `TOPE_MENSAJES_POR_DIA` | `0` (el `.env.example` trae `50`) | Cuántos mensajes de una misma conversación atiende en 24 h antes de pasarla a `humano` (cuentan los que manda la persona, no las respuestas). `0` = sin tope |
 | `LARGO_MAXIMO_DE_ENTRADA` | `2000` | Lo que entra se recorta a este largo antes de llegar al modelo |
+| `RESPETAR_RESUELTAS` | `0` (el `.env.example` trae `1`) | `1` = si resolvés una conversación, el agente no le vuelve a hablar a esa persona |
+| `SOLO_EL_PRIMER_MENSAJE` | `0` | `1` = contesta el primer mensaje y la conversación pasa a `humano` |
+| `DESCRIBIR_IMAGENES` | `1` | Las fotos las describe el modelo del agente. `0` = no se leen: pregunta qué son |
+| `MODELO_IMAGENES` | — (el del agente) | Otro modelo del mismo proveedor para describir fotos, por ejemplo uno más barato |
+| `TRANSCRIBIR_AUDIOS` | `1` | Los audios los transcribe OpenAI (pide `OPENAI_API_KEY`). Sin clave o con `0`, pasan a `humano` |
+| `MODELO_TRANSCRIPCION` | `gpt-4o-mini-transcribe` | El modelo de OpenAI que transcribe |
+| `PAUSA_ENTRE_GLOBOS` | `1` | Entre globo y globo, lo que tardaría alguien en tipearlo |
+| `ESPERA_SEGUNDOS` | `0` | Una espera antes de contestar (de 0 a 600). `0` = contesta apenas junta la ráfaga |
+| `SILENCIO_SEGUNDOS` | `25` | Cuánto de esa espera va sin puntitos |
+| `WHATSAPP_TOKEN` | — | El token de tu cuenta de WhatsApp Business en Meta: para el visto azul y los puntitos |
+| `WHATSAPP_PHONE_NUMBER_ID` | — | El id del número en Meta (solo dígitos: no es el teléfono) |
 | `AVISOS_EMAIL` | — | A quién le llega el mail cuando algo se rompe |
 | `GMAIL_CLIENT_ID` | — | El cliente de Google Cloud («App de escritorio»). Lo deja `conectar_gmail.py` |
 | `GMAIL_CLIENT_SECRET` | — | Su clave. Lo deja `conectar_gmail.py` |
@@ -1094,8 +1243,10 @@ Y estas, solo si vas a atender WhatsApp con `webhook_chatwoot.py`:
 | `SMTP_CLAVE` | — | Su clave (los espacios no importan) |
 | `PUERTO` | `8000` | Dónde escucha el webhook |
 
-**No hace falta ninguna variable de Meta** (`WHATSAPP_TOKEN`, `APP_SECRET` y
-compañía): el agente le habla a Chatwoot, y Chatwoot es el que le habla a Meta.
+**Para atender WhatsApp no hace falta ninguna variable de Meta:** el agente le
+habla a Chatwoot, y Chatwoot es el que le habla a Meta. Las dos de Meta de la
+tabla (`WHATSAPP_TOKEN` y `WHATSAPP_PHONE_NUMBER_ID`) son solo para el visto
+azul y los puntitos en el celular de la persona, y son opcionales.
 
 ---
 

@@ -94,6 +94,11 @@ class TopeDeMensajes:
 
         return RESPONDER
 
+    def olvidar(self, conversacion: str) -> None:
+        """Borra la cuenta de esa conversación: la usa /reset, para probar de cero."""
+        self._mensajes.pop(conversacion, None)
+        self._bloqueadas_en.pop(conversacion, None)
+
     def _limpiar(self, ahora: float) -> None:
         viejas = [
             conversacion

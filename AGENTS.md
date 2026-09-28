@@ -52,7 +52,9 @@ Lo que importa acá es qué hace cada uno:
 | `canales/base.py` | La forma de un canal |
 | `canales/telegram.py` | **El bot de Telegram.** Polling, corre en tu máquina. |
 | `canales/chatwoot.py` | **El canal de WhatsApp**, con Chatwoot en el medio |
-| `canales/buffer.py` | Junta la ráfaga de mensajes cortos y contesta una vez |
+| `canales/buffer.py` | Junta la ráfaga de mensajes cortos y contesta una vez. Una parte puede ser una tarea que todavía se está leyendo (una foto): se espera en su lugar |
+| `canales/adjuntos.py` | **Lo que no es texto, a texto:** audios (OpenAI), fotos y stickers (el modelo del agente), ubicaciones, contactos, archivos, videos y citas |
+| `canales/whatsapp_meta.py` | El visto azul y el «escribiendo…» en el celular de la persona, pidiéndoselos a Meta (opcional) |
 | `web/webhook.py` | **El servidor que atiende WhatsApp.** Es lo que corre en producción. |
 | `../webhook_chatwoot.py` | El punto de entrada del webhook |
 | `../Dockerfile` | Empaqueta el **webhook** (`webhook_chatwoot.py`); el bot de Telegram queda adentro por si lo querés correr |
@@ -115,8 +117,8 @@ Ninguna credencial en el código, ni una. Las claves se leen únicamente en
   algo se hace de una forma no obvia, explicá la razón.
 - **El error del proveedor nunca se esconde.** Si Anthropic, OpenAI o Google
   devuelven un error, tiene que llegar tal cual a quien lo puede arreglar: en
-  la terminal y la plataforma de pruebas, a la pantalla; en WhatsApp, a la
-  nota privada de Chatwoot y al mail del dueño (`AVISOS_EMAIL`). **Al cliente
+  la terminal y la plataforma de pruebas, a la pantalla; en WhatsApp, al
+  mail del dueño (`AVISOS_EMAIL`), y la conversación pasa a `humano`. **Al cliente
   que escribió por WhatsApp no le llega nunca**: para él, un error técnico es
   un negocio que no anda.
   Sí se pueden tragar fallas que no son del modelo y no deben voltear la app.
@@ -125,12 +127,14 @@ Ninguna credencial en el código, ni una. Las claves se leen únicamente en
   se sigue igual), `_mensajes_en_memoria()` (es un contador para la pantalla),
   `Avisos.avisar()` (un mail que no sale no puede tirar abajo al agente que
   avisa), los pasos de `algo_se_rompio()` en `web/webhook.py` (que no se
-  pueda dejar la nota no puede impedir el mail), `mantener_el_permiso()` en
-  el mismo archivo (si Google no acepta el permiso, queda en el registro y
-  se vuelve a probar al otro día), `Chatwoot.escribiendo()`
-  (el «escribiendo…» es cosmético) y `Chatwoot._etiquetas_de()` (si no se
-  pueden leer, se responde igual). **No agregues otra sin dejar
-  el motivo escrito al lado.**
+  pueda poner la etiqueta no puede impedir el mail), `mantener_el_permiso()`
+  en el mismo archivo (si Google no acepta el permiso, queda en el registro y
+  se vuelve a probar), `Chatwoot.escribiendo()` y `marcar_visto_y_escribiendo()`
+  (cosméticos), `Chatwoot._etiquetas_de()`, `Chatwoot.lo_agarro_otro()` y
+  `Chatwoot.ya_la_cerro()` (si no se pueden leer, se responde igual: perder a
+  alguien por una consulta caída es peor), y la lectura de un adjunto en
+  `Lector` (si una foto o un audio no se pueden leer, el agente pregunta y el
+  error va al mail). **No agregues otra sin dejar el motivo escrito al lado.**
 - **Los tests no gastan tokens.** Usan `GenericFakeChatModel`. Si agregás una
   función que llama a un proveedor, el test va con modelo falso.
 - **Sin dependencias nuevas** salvo que resuelvan algo que no se puede hacer
@@ -179,9 +183,9 @@ raíz del repo y no desde otro lado.
 
 ---
 
-## Al instalar: cuatro preguntas antes de desplegar
+## Al instalar: seis preguntas antes de desplegar
 
-Si te piden instalarlo o desplegarlo para WhatsApp, **preguntale estas cuatro
+Si te piden instalarlo o desplegarlo para WhatsApp, **preguntale estas seis
 cosas a la persona antes de completar el `.env`**. Son decisiones de su
 negocio: no las llenes con el valor por defecto. Explicale cada una en
 palabras simples, sin jerga, y recién después escribí la respuesta. Si algo
@@ -235,7 +239,7 @@ Contale: hay gente que se queda charlando de cualquier cosa con el agente, y
 cada respuesta se paga. Cuentan los mensajes que manda la persona en esa
 conversación, en 24 horas (no las respuestas: tres mensajes seguidos cuentan
 tres). Al pasar el tope, el agente le pone la etiqueta `humano` a esa
-conversación y deja una nota privada. **La etiqueta no se va sola**: vuelve a
+conversación y se calla. **La etiqueta no se va sola**: vuelve a
 contestar cuando alguien del equipo se la saca. Si no sabe qué poner, 50. `0`
 es sin tope. Recomendale además un tope de gasto en la consola del proveedor
 del modelo: es el único freno que no depende del agente.
@@ -244,9 +248,8 @@ del modelo: es el único freno que no depende del agente.
 `GMAIL_*`
 
 Contale: si falla el modelo o Chatwoot no acepta la respuesta, la persona
-que escribió no ve ningún error; la conversación pasa a `humano`, queda una
-nota privada y a él le llega un mail (de un mismo error, uno por hora como
-mucho). Preguntale a qué dirección le llega (`AVISOS_EMAIL`) y desde qué
+que escribió no ve ningún error; la conversación pasa a `humano` y a él le
+llega un mail con el error (de un mismo error, uno por hora como mucho). Preguntale a qué dirección le llega (`AVISOS_EMAIL`) y desde qué
 cuenta de Google sale (puede ser la misma).
 
 El mail sale **con Google Cloud**: un permiso que sirve solo para mandar
@@ -304,8 +307,37 @@ Si su mail no es de Google (Outlook, Zoho, el de su dominio), van las
 `SMTP_*` con los datos de su proveedor, en vez de las `GMAIL_*`. Si no
 quiere avisos, `AVISOS_EMAIL` vacío: todo lo demás anda igual.
 
+**5. Si resolvés una conversación en Chatwoot, ¿el agente no le vuelve a
+hablar a esa persona?** → `RESPETAR_RESUELTAS`
+
+Contale: hay equipos para los que resolver es «con esta persona ya terminé»,
+y otros que resuelven de rutina todo lo que ya se contestó. Con `1`, el
+agente no le vuelve a hablar a quien tenga una conversación resuelta (aunque
+escriba días después): le pone `humano` y aparece en la bandeja. Para
+devolvérsela al agente, se reabre y se le saca la etiqueta. Si resuelven de
+rutina, `0`: si no, el agente se calla con los clientes que vuelven. Lo
+recomendado para un negocio que atiende ventas es `1`.
+
+Con `1`, en el webhook de Chatwoot va tildado también el evento
+`conversation_status_changed`: hay bandejas que reabren la misma conversación
+cuando la persona vuelve a escribir, y la única forma de saber que se había
+resuelto es enterarse en el momento.
+
+**6. ¿El agente atiende toda la charla, o contesta solo el primer mensaje y
+te la pasa?** → `SOLO_EL_PRIMER_MENSAJE`
+
+Contale: por defecto (`0`) atiende toda la charla. Con `1`, contesta el primer
+mensaje de cada conversación y le pone `humano`: sirve si quiere que el
+agente abra la charla y la siga una persona.
+
+**Además, sin preguntar:** si tiene `OPENAI_API_KEY` (aunque use otro
+proveedor), los audios se transcriben; si no, pasan a una persona. Y si
+quiere el visto azul y los puntitos en el celular, van `WHATSAPP_TOKEN` y
+`WHATSAPP_PHONE_NUMBER_ID` de su cuenta de WhatsApp Business (los mismos que
+usa Chatwoot). Contáselo en una línea cada uno; no lo trabes por eso.
+
 **En el servidor van todas las variables**: las de Chatwoot y las de estas
-cuatro decisiones (en Coolify, *Environment Variables* de la aplicación). La
+seis decisiones (en Coolify, *Environment Variables* de la aplicación). La
 lista completa está en el README, en «Con Coolify».
 
 ---
@@ -414,6 +446,23 @@ Cosas que parecen bugs y no lo son, o que cuestan de encontrar:
   casilla por permiso y la persona puede destildar justo el de mandar; igual,
   `conectar_gmail.py` revisa que haya vuelto y, si no, no guarda nada.
 
+- **El aviso de Chatwoot sale antes de que el archivo esté.** Chatwoot avisa
+  el mensaje nuevo mientras todavía baja el audio de Meta: la dirección del
+  aviso puede dar 404. `Lector._bajar()` espera y le pide la dirección de nuevo
+  a la API de mensajes.
+- **Bajar y leer un audio adentro del pedido traba el servidor entero**: nadie
+  más es atendido hasta que termina, y Chatwoot reintenta. Por eso la lectura
+  va en una tarea aparte, que entra a la ráfaga en su lugar.
+- **Los puntitos de WhatsApp duran 25 segundos**, y van atados al id del
+  mensaje que llegó (`source_id`, empieza con `wamid.`). En una espera larga
+  se renuevan cada 20.
+- **Resolver no alcanza con mirar la conversación**: según la bandeja,
+  Chatwoot abre una NUEVA cuando la persona vuelve a escribir (y las etiquetas
+  no viajan) o reabre la misma (y deja de figurar como resuelta).
+- **Lo que llega adentro de un adjunto no arma renglones**: un nombre de lugar
+  con saltos de línea podría inventar otra línea entre corchetes. `_limpio()`
+  deja todo en una.
+
 ---
 
 ## Lo que NO tiene (todavía)
@@ -421,6 +470,8 @@ Cosas que parecen bugs y no lo son, o que cuestan de encontrar:
 No lo agregues salvo que te lo pidan: son las próximas etapas.
 
 - Más herramientas (hay una sola: el clima)
+- Leer PDF y videos (llegan, el agente sabe que llegaron y pregunta)
+- Contestar con audio
 - RAG / base de conocimiento
 - Autenticación en la plataforma de pruebas (es local, un solo usuario)
 - Varias conversaciones en paralelo en la web (usa un `thread_id` fijo)
@@ -539,8 +590,13 @@ y para mejor: la mitad de las piezas las resuelve Chatwoot.
 | Juntar la ráfaga de mensajes | `canales/buffer.py` | En memoria, no Redis: hay un solo proceso atendiendo. `BUFFER_SEGUNDOS` |
 | Partir la respuesta en varios globos | `respuesta.partir_respuesta()` | `MENSAJES_POR_RESPUESTA`: `3` como una persona, `1` todo junto. Meta cobra por mensaje desde el 1/10/2026. Ningún globo pasa los 4.096 caracteres de WhatsApp |
 | Traspaso a una persona | `Chatwoot.deberia_responder()` | La etiqueta `CHATWOOT_ETIQUETA_HUMANO` apaga al bot en esa conversación, con un clic desde la bandeja |
-| Si el modelo o Chatwoot fallan | `web/webhook.py` → `algo_se_rompio()` | Nada al cliente: etiqueta `humano` (primero, y la nota dice si se pudo), nota privada con el error y mail al dueño (`avisos.py`), uno por hora por tipo de error. Una respuesta vacía del modelo cuenta como falla |
-| El que charla de más | `frenos.TopeDeMensajes` | `TOPE_MENSAJES_POR_DIA`: al pasarlo, etiqueta `humano` + nota privada. Poner la etiqueta **suma** a las que ya había: en Chatwoot, mandar etiquetas reemplaza la lista |
+| Si el modelo o Chatwoot fallan | `web/webhook.py` → `algo_se_rompio()` | Nada al cliente: etiqueta `humano` (primero, y el mail dice si se pudo) y mail al dueño (`avisos.py`), uno por hora por tipo de error. Una respuesta vacía del modelo cuenta como falla. **Sin notas privadas**, a propósito |
+| El que charla de más | `frenos.TopeDeMensajes` | `TOPE_MENSAJES_POR_DIA`: al pasarlo, etiqueta `humano`. Poner la etiqueta **suma** a las que ya había: en Chatwoot, mandar etiquetas reemplaza la lista |
+| Fotos, audios, ubicaciones, citas | `canales/adjuntos.py` → `Lector` | Todo a texto, en segundo plano y en su lugar de la ráfaga. Se baja solo de `CHATWOOT_URL` (del evento se usa el camino), con tope de tamaño y reintento si el archivo todavía no está |
+| No contestar arriba de una persona | `Chatwoot.lo_agarro_otro()` | Se vuelve a mirar la conversación antes del modelo y antes de mandar: si le pusieron `humano` o la resolvieron, no contesta |
+| Resolver calla al agente | `Chatwoot.ya_la_cerro()` + el evento `conversation_status_changed` | Con `RESPETAR_RESUELTAS=1`. Las dos piezas hacen falta: una bandeja abre conversación nueva (se mira al contacto), otra reabre la misma (se pone la etiqueta al resolver) |
+| Ritmo de persona | `Chatwoot.enviar()` + `canales/whatsapp_meta.py` | Pausa entre globos (`tarda_en_escribir`), espera opcional, y el visto azul y los puntitos con los datos de Meta |
+| Probar de cero | `POST /reset/<token>` | Borra la memoria y la cuenta del tope de UNA conversación. No hay «todas», a propósito |
 | Textos pegados enormes | `web/webhook.py` | Se recortan a `LARGO_MAXIMO_DE_ENTRADA` antes del modelo: quedan en la memoria y se pagarían en cada mensaje |
 | La clave en los registros | `web/webhook.TaparElToken` | uvicorn anota la dirección de cada pedido, y la del webhook lleva la clave: se tapa el valor exacto en todos los registros (también en una dirección mal escrita), y además cualquier `/chatwoot/<algo>` |
 | Lo que llega con otra forma | `Chatwoot.traducir()` | Un evento que no es un objeto, un contenido que no es texto o un id de conversación con letras se ignoran: no tiran el servidor ni se cuelan en un mail |

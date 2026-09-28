@@ -2,8 +2,8 @@
 
 En WhatsApp el error no se le muestra a la persona que escribió: lo que ve
 el cliente de un negocio no puede ser "AuthenticationError: invalid x-api-key".
-El error va a dos lugares donde sí sirve: una nota privada en la
-conversación de Chatwoot (la ve el equipo) y un mail al dueño del agente.
+El error va a donde sí sirve: un mail al dueño del agente, con el error
+completo. La conversación, además, pasa a una persona (la etiqueta).
 
 El mail sale de una de dos maneras:
 

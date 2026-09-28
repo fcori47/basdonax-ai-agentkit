@@ -7,7 +7,7 @@ propósito: así no se desincroniza.
 **Leé `AGENTS.md` antes de tocar nada.**
 
 **Si te piden instalarlo o desplegarlo para WhatsApp**, antes de completar el
-`.env` hacé las cuatro preguntas de la sección «Al instalar» de `AGENTS.md`.
+`.env` hacé las seis preguntas de la sección «Al instalar» de `AGENTS.md`.
 Son decisiones de la persona, no tuyas: no las llenes con el valor por defecto.
 Lo que no tenga hecho (la tarjeta en Meta, el mail de avisos con Google
 Cloud), guialo hasta que quede hecho. La cuenta de Google se conecta con

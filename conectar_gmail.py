@@ -259,8 +259,8 @@ class _Servidor(ThreadingHTTPServer):
         self.estado = estado
         self.vuelta: dict[str, str] | None = None
         self.ignoradas = 0
-        # handle_request() vuelve cada segundo, para poder cortar a tiempo.
-        self.timeout = 1
+        # handle_request() vuelve seguido, para poder cortar a tiempo.
+        self.timeout = 0.25
 
 
 def esperar_la_vuelta(servidor: _Servidor, espera: float | None = None) -> str:

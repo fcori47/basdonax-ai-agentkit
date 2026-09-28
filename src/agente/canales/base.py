@@ -61,3 +61,11 @@ class Canal(ABC):
         Por defecto contesta todo. Cada canal lo ajusta.
         """
         return True
+
+    def lo_agarro_otro(self, conversacion: str) -> str:
+        """Si mientras el agente esperaba para contestar, alguien le sacó la charla.
+
+        Devuelve el motivo, o "" si la conversación sigue siendo suya. Por
+        defecto nadie se la saca: un canal sin bandeja (Telegram) no tiene quién.
+        """
+        return ""

@@ -85,6 +85,39 @@ class Config:
     # siguen, porque queda en la memoria de la conversación.
     largo_maximo_de_entrada: int = 2000
 
+    # -- Lo que se pregunta al instalar, además ------------------------------
+    # Resolver una conversación en Chatwoot = el agente no le vuelve a hablar
+    # a esa persona. Por defecto apagado: hay equipos que resuelven de rutina
+    # y se quedarían sin agente para los clientes que vuelven. El .env.example
+    # lo trae prendido para las instalaciones nuevas.
+    respetar_resueltas: bool = False
+    # Que conteste solo el primer mensaje de cada conversación y se la pase a
+    # una persona (la etiqueta). Por defecto sigue toda la charla.
+    solo_el_primer_mensaje: bool = False
+
+    # -- Lo que llega que no es texto (canales/adjuntos.py) -------------------
+    # Las fotos las describe el mismo modelo del agente; se puede usar otro más
+    # barato del mismo proveedor.
+    describir_imagenes: bool = True
+    modelo_imagenes: str = ""
+    # Los audios los transcribe OpenAI: hace falta su clave aunque el agente
+    # use otro proveedor. Sin clave, el audio pasa a una persona.
+    transcribir_audios: bool = True
+    modelo_transcripcion: str = "gpt-4o-mini-transcribe"
+    clave_openai: str = field(default="", repr=False)
+
+    # -- El ritmo de persona ----------------------------------------------------
+    # Entre globo y globo, lo que tardaría alguien en tipearlo.
+    pausa_entre_globos: bool = True
+    # Una espera antes de contestar, con un rato de silencio primero y después
+    # los puntitos. 0 = contesta apenas junta la ráfaga.
+    espera_segundos: int = 0
+    silencio_segundos: int = 25
+    # El visto azul y los puntitos en el celular de la persona (opcional):
+    # los datos de tu cuenta de WhatsApp Business en Meta.
+    whatsapp_token: str = field(default="", repr=False)
+    whatsapp_phone_number_id: str = ""
+
     # -- Avisos por mail cuando algo se rompe: lo pregunta la instalación ----
     avisos_email: str = ""
     # Por Google (lo recomendado): los tres los deja conectar_gmail.py.
@@ -156,6 +189,21 @@ class Config:
                 f"positivo, no {tope_mensajes_por_dia}."
             )
 
+        espera_segundos = _entero("ESPERA_SEGUNDOS", 0)
+        silencio_segundos = _entero("SILENCIO_SEGUNDOS", 25)
+        if not 0 <= espera_segundos <= 600 or silencio_segundos < 0:
+            raise ErrorDeConfiguracion(
+                "ESPERA_SEGUNDOS va de 0 a 600 (diez minutos ya no es una pausa: es "
+                "no contestar) y SILENCIO_SEGUNDOS no puede ser negativo."
+            )
+
+        numero_id = (os.getenv("WHATSAPP_PHONE_NUMBER_ID") or "").strip()
+        if numero_id and not numero_id.isdigit():
+            raise ErrorDeConfiguracion(
+                "WHATSAPP_PHONE_NUMBER_ID es el id numérico del número en Meta (solo "
+                f"dígitos), no «{numero_id[:30]}». No es el número de teléfono."
+            )
+
         return cls(
             proveedor=proveedor,
             modelo=modelo,
@@ -181,6 +229,20 @@ class Config:
             mensajes_por_respuesta=mensajes_por_respuesta,
             tope_mensajes_por_dia=tope_mensajes_por_dia,
             largo_maximo_de_entrada=largo_maximo_de_entrada,
+            respetar_resueltas=_booleano("RESPETAR_RESUELTAS", False),
+            solo_el_primer_mensaje=_booleano("SOLO_EL_PRIMER_MENSAJE", False),
+            describir_imagenes=_booleano("DESCRIBIR_IMAGENES", True),
+            modelo_imagenes=(os.getenv("MODELO_IMAGENES") or "").strip(),
+            transcribir_audios=_booleano("TRANSCRIBIR_AUDIOS", True),
+            modelo_transcripcion=(
+                os.getenv("MODELO_TRANSCRIPCION") or "gpt-4o-mini-transcribe"
+            ).strip(),
+            clave_openai=(os.getenv("OPENAI_API_KEY") or "").strip(),
+            pausa_entre_globos=_booleano("PAUSA_ENTRE_GLOBOS", True),
+            espera_segundos=espera_segundos,
+            silencio_segundos=silencio_segundos,
+            whatsapp_token=(os.getenv("WHATSAPP_TOKEN") or "").strip(),
+            whatsapp_phone_number_id=numero_id,
             avisos_email=(os.getenv("AVISOS_EMAIL") or "").strip(),
             gmail_client_id=(os.getenv("GMAIL_CLIENT_ID") or "").strip(),
             gmail_client_secret=(os.getenv("GMAIL_CLIENT_SECRET") or "").strip(),

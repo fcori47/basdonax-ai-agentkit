@@ -10,16 +10,19 @@ Lo que hace, de punta a punta:
     Chatwoot pega en POST /chatwoot/<token>
       → contestamos 200 al toque              ← esto es obligatorio
       → ¿pasó el tope de mensajes del día?     (frenos.py)
+      → una foto, un audio o una cita se leen en segundo plano (canales/adjuntos.py)
       → juntamos la ráfaga de mensajes          (buffer.py)
+      → ¿la agarró alguien del equipo mientras tanto? se vuelve a mirar
       → responde el agente                      (agente.py)
       → se parte en 1 o varios mensajes         (respuesta.py)
-      → la respuesta sale por la API de Chatwoot (canales/chatwoot.py)
+      → la respuesta sale por la API de Chatwoot, con pausa entre globos
 
 **Por qué el 200 sale antes de responderle a la persona.** Chatwoot espera
 que el webhook conteste rápido; si tardamos lo que tarda el modelo en
 pensar, da el pedido por fallado y lo reintenta — y entonces el agente
 contesta dos veces lo mismo. Así que primero decimos "recibido" y recién
-después pensamos la respuesta, en segundo plano.
+después pensamos la respuesta, en segundo plano. Lo mismo con bajar y leer
+una foto o un audio: nunca antes del 200, y nunca frenando a los demás.
 
 **La seguridad es el token en la URL.** Chatwoot no firma sus webhooks (no
 hay HMAC como en Meta), así que lo único que separa un mensaje de verdad de
@@ -27,9 +30,8 @@ cualquiera que descubra el dominio es que la URL tenga el token. Por eso
 tiene que ser largo y al azar (si no, el servidor no arranca), por eso no va
 en el código y por eso se tapa en los registros.
 
-**Si algo se rompe, el cliente no ve el error.** El error va a una nota
-privada en la conversación y a un mail para vos (avisos.py), y la
-conversación pasa a una persona.
+**Si algo se rompe, el cliente no ve el error.** La conversación pasa a una
+persona (la etiqueta) y te llega un mail con el error (avisos.py).
 """
 
 from __future__ import annotations
@@ -47,10 +49,14 @@ from fastapi.responses import JSONResponse
 
 from ..agente import Agente
 from ..avisos import Avisos
+from ..canales.adjuntos import DescriptorDeFotos, Lector, TranscriptorOpenAI
+from ..canales.base import MensajeEntrante
 from ..canales.buffer import BufferDeMensajes
-from ..canales.chatwoot import Chatwoot
+from ..canales.chatwoot import Chatwoot, tarda_en_escribir
+from ..canales.whatsapp_meta import marcar_visto_y_escribiendo, wamid_del_evento
 from ..config import Config, ErrorDeConfiguracion
 from ..frenos import BLOQUEAR, IGNORAR, TopeDeMensajes
+from ..modelos import crear_modelo
 from ..respuesta import partir_respuesta
 
 registro = logging.getLogger("agente.webhook")
@@ -72,25 +78,8 @@ _TOKENS_DE_EJEMPLO = {"un-secreto-largo-y-al-azar"}
 # adentro de un mensaje, alguien podría inventar líneas de registro falsas.
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
-NOTA_DE_ERROR = (
-    "Aviso del agente: no pude responder en esta conversación.\n\n"
-    "{error}\n\n"
-    "La persona no recibió respuesta, y tampoco vio el error. {etiqueta}"
-)
-ETIQUETA_PUESTA = (
-    "Le puse la etiqueta «{etiqueta}» para que la atienda alguien del equipo: "
-    "no le voy a contestar hasta que se la saquen."
-)
-ETIQUETA_NO_PUESTA = (
-    "No pude ponerle la etiqueta «{etiqueta}»: si querés que la atienda alguien "
-    "del equipo y que yo no le conteste, ponésela a mano."
-)
-
-NOTA_DE_TOPE = (
-    "Aviso del agente: esta persona me mandó más de {tope} mensajes en 24 horas, "
-    "así que dejé de contestarle y le puse la etiqueta «{etiqueta}». No se va "
-    "sola: si querés que la vuelva a atender, sacale la etiqueta."
-)
+# Los puntitos de WhatsApp duran 25 segundos: en una espera larga se renuevan.
+RENOVAR_ESCRIBIENDO = 20
 
 MAIL_DE_ERROR = """El agente no pudo responder en una conversación.
 
@@ -100,7 +89,6 @@ El error:
 Lo que ya se hizo:
 · La persona que escribió no recibió respuesta, y tampoco vio el error.
 · {etiqueta}
-· {nota}
 
 La conversación: {enlace}
 
@@ -109,6 +97,16 @@ Cuando lo arregles, buscá en Chatwoot las conversaciones con la etiqueta
 «{nombre_etiqueta}» y sacásela a las que quieras devolverle al agente: hasta
 entonces no les contesta. De un mismo error te llega un mail por hora como
 mucho, así que puede haber más conversaciones que esta."""
+
+MAIL_DE_ADJUNTO = """El agente no pudo leer algo que le mandaron en una conversación.
+
+{error}
+
+A la persona se le pidió que lo cuente por escrito, así que la charla sigue.
+La conversación: {enlace}
+
+Si pasa con todos los audios, revisá OPENAI_API_KEY (la clave o el saldo).
+De un mismo error te llega un mail por hora como mucho."""
 
 CAUSA_MODELO = (
     "la clave del modelo (vencida o mal cargada en el servidor) o la cuenta del "
@@ -174,18 +172,51 @@ def validar_token(token: str) -> None:
         )
 
 
+def armar_lector(config: Config, canal: Chatwoot) -> Lector:
+    """El lector de adjuntos, con lo que se pueda según la configuración.
+
+    Las fotos, con el mismo modelo del agente (o MODELO_IMAGENES, si se quiere
+    uno más barato del mismo proveedor). Los audios, con OpenAI: sin su clave,
+    un audio pasa a una persona en vez de quedar sin respuesta.
+    """
+    describir = None
+    if config.describir_imagenes:
+        describir = DescriptorDeFotos(
+            lambda: crear_modelo(
+                proveedor=config.proveedor,
+                api_key=config.api_key,
+                modelo=config.modelo_imagenes or config.modelo,
+                max_tokens=800,
+            )
+        )
+    transcribir = None
+    if config.transcribir_audios and config.clave_openai:
+        transcribir = TranscriptorOpenAI(config.clave_openai, config.modelo_transcripcion)
+    return Lector(canal, describir=describir, transcribir=transcribir)
+
+
+def _contacto_del(evento: dict) -> str:
+    """El id del contacto que escribió (el remitente de un mensaje que entra)."""
+    remitente = evento.get("sender") if isinstance(evento, dict) else None
+    valor = remitente.get("id") if isinstance(remitente, dict) else None
+    if isinstance(valor, bool) or not str(valor or "").isdigit():
+        return ""
+    return str(valor)
+
+
 def crear_app(
     config: Config | None = None,
     agente: Agente | None = None,
     canal: Chatwoot | None = None,
     avisos: Avisos | None = None,
     tope: TopeDeMensajes | None = None,
+    lector: Lector | None = None,
 ) -> FastAPI:
     """Arma el servidor.
 
-    El agente, el canal y los avisos se pueden pasar armados: es lo que hacen
-    los tests para probar todo esto sin salir a internet, sin mandar un mail
-    y sin gastar un token.
+    El agente, el canal, los avisos y el lector se pueden pasar armados: es
+    lo que hacen los tests para probar todo esto sin salir a internet, sin
+    mandar un mail y sin gastar un token.
     """
     config = config or Config.desde_entorno()
     validar_token(config.chatwoot_webhook_token)
@@ -203,7 +234,9 @@ def crear_app(
     agente = agente or Agente(config)
     avisos = avisos or Avisos.desde_config(config)
     tope = tope or TopeDeMensajes(config.tope_mensajes_por_dia)
+    lector = lector or armar_lector(config, canal)
     etiqueta = config.chatwoot_etiqueta_humano
+    con_meta = bool(config.whatsapp_token and config.whatsapp_phone_number_id)
 
     # Un candado por conversación. Dos personas distintas se atienden a la
     # vez sin problema, pero dos mensajes de la MISMA persona no: si se
@@ -216,10 +249,62 @@ def crear_app(
     # puede desaparecer a mitad de camino.
     en_curso: set[asyncio.Task] = set()
 
-    def en_segundo_plano(corrutina) -> None:
+    # El último mensaje de WhatsApp de cada conversación: el visto y los
+    # puntitos en el celular de la persona van atados a ese id (ver
+    # canales/whatsapp_meta.py).
+    ultimo_wamid: dict[str, str] = {}
+
+    # Las conversaciones a las que ya se les miró si esa persona tiene una
+    # resuelta. Una vez por conversación alcanza: si estaba cerrada, desde ahí
+    # la frena la etiqueta.
+    revisadas: set[str] = set()
+
+    def en_segundo_plano(corrutina) -> asyncio.Task:
         tarea = asyncio.create_task(corrutina)
         en_curso.add(tarea)
         tarea.add_done_callback(en_curso.discard)
+        return tarea
+
+    def visto_y_escribiendo(conversacion: str) -> None:
+        """El visto y los puntitos en el celular de la persona, si hay datos de Meta."""
+        wamid = ultimo_wamid.get(conversacion, "")
+        if con_meta and wamid:
+            marcar_visto_y_escribiendo(
+                wamid, config.whatsapp_token, config.whatsapp_phone_number_id
+            )
+
+    async def esperar_como_persona(conversacion: str) -> None:
+        """La espera antes de contestar (si se configuró), y recién ahí el visto y los puntitos.
+
+        Primero un rato de nada y después los puntitos: empezar a escribir en
+        el mismo segundo en que llega el mensaje y tardar un minuto queda peor
+        que el silencio (nadie tipea tan lento). Con la pausa primero se lee
+        como alguien que estaba en otra cosa, ve el mensaje y se pone a
+        contestar. Sin espera configurada, el visto y los puntitos salen ya.
+        """
+        espera = max(0, config.espera_segundos)
+        silencio = min(max(0, config.silencio_segundos), espera)
+        if silencio:
+            await asyncio.sleep(silencio)
+        restante = espera - silencio
+
+        await asyncio.to_thread(visto_y_escribiendo, conversacion)
+        await asyncio.to_thread(canal.escribiendo, conversacion, True)
+        while restante > 0:
+            tramo = min(RENOVAR_ESCRIBIENDO, restante)
+            await asyncio.sleep(tramo)
+            restante -= tramo
+            if restante > 0:
+                await asyncio.to_thread(visto_y_escribiendo, conversacion)
+                await asyncio.to_thread(canal.escribiendo, conversacion, True)
+
+    async def ya_no_le_toca(conversacion: str) -> bool:
+        """Si mientras esperaba alguien del equipo agarró la charla o la resolvió."""
+        motivo = await asyncio.to_thread(canal.lo_agarro_otro, conversacion)
+        if not motivo:
+            return False
+        registro.info("[%s] no contesto: mientras esperaba, %s", conversacion, motivo)
+        return True
 
     async def responder(conversacion: str, texto: str) -> None:
         """Le pasa la ráfaga al agente y manda la respuesta por Chatwoot."""
@@ -235,12 +320,21 @@ def crear_app(
 
             registro.info("[%s] %s", conversacion, _CONTROL.sub(" ", texto)[:200])
 
-            # El "escribiendo..." y el agente son código bloqueante (urllib y
-            # el modelo). Van a un hilo aparte para no trabar el servidor:
-            # mientras este mensaje se piensa, los demás siguen entrando.
-            await asyncio.to_thread(canal.escribiendo, conversacion, True)
-
             try:
+                # El "escribiendo..." y el agente son código bloqueante (urllib
+                # y el modelo). Van a un hilo aparte para no trabar el servidor:
+                # mientras este mensaje se piensa, los demás siguen entrando.
+                await esperar_como_persona(conversacion)
+
+                # Se vuelve a mirar ANTES del modelo: si ya no le toca, no se
+                # gasta ni un token.
+                if await ya_no_le_toca(conversacion):
+                    return
+
+                primera = config.solo_el_primer_mensaje and not await asyncio.to_thread(
+                    agente.historial, conversacion
+                )
+
                 try:
                     respuesta = await asyncio.to_thread(
                         agente.responder, texto, conversacion
@@ -263,23 +357,44 @@ def crear_app(
                     )
                     return
 
+                # Y una vez más con la respuesta escrita: el modelo tarda unos
+                # segundos, y es el último momento en que se puede no mandar.
+                if await ya_no_le_toca(conversacion):
+                    return
+
                 try:
-                    await asyncio.to_thread(canal.enviar, conversacion, mensajes)
+                    await asyncio.to_thread(
+                        canal.enviar,
+                        conversacion,
+                        mensajes,
+                        (lambda: visto_y_escribiendo(conversacion)) if con_meta else None,
+                        tarda_en_escribir if config.pausa_entre_globos else None,
+                    )
                 except Exception as e:
                     await algo_se_rompio(conversacion, e, CAUSA_CHATWOOT, "envio")
                     return
 
                 registro.info("[%s] -> %s mensaje(s)", conversacion, len(mensajes))
+
+                if primera:
+                    # Lo eligió al instalar: el agente abre la charla y la sigue
+                    # una persona. Va después de mandar: si el envío fallaba, la
+                    # persona quedaba sin respuesta y sin nadie que la atienda.
+                    try:
+                        await asyncio.to_thread(canal.pasar_a_persona, conversacion)
+                        registro.info("[%s] contestó el primero: sigue una persona", conversacion)
+                    except Exception as e:
+                        registro.error("[%s] no se pudo pasar a una persona: %s", conversacion, e)
             finally:
                 await asyncio.to_thread(canal.escribiendo, conversacion, False)
 
     async def algo_se_rompio(conversacion: str, error: Exception, causa: str, tipo: str) -> None:
         """El modelo o Chatwoot fallaron: el equipo se entera, el cliente no.
 
-        El error no se esconde (es regla del proyecto): llega completo a la
-        nota privada y al mail. Lo único que cambia es a quién le llega. Cada
-        paso va por separado, y la etiqueta primero: que falle uno no puede
-        impedir los otros, y la nota no puede decir que la puso si no pudo.
+        El error no se esconde (es regla del proyecto): llega completo al mail
+        del dueño. Lo único que cambia es a quién le llega. La etiqueta va
+        primero y por separado: que no se pueda poner no puede impedir el mail,
+        y el mail no puede decir que se puso si no se puso.
         """
         aviso = f"{type(error).__name__}: {error}"
         registro.error("[%s] %s", conversacion, _CONTROL.sub(" ", aviso))
@@ -290,20 +405,6 @@ def crear_app(
         except Exception as e:
             registro.error("[%s] no se pudo poner la etiqueta: %s", conversacion, e)
             etiquetada = False
-
-        texto_etiqueta = (ETIQUETA_PUESTA if etiquetada else ETIQUETA_NO_PUESTA).format(
-            etiqueta=etiqueta
-        )
-        try:
-            await asyncio.to_thread(
-                canal.nota_privada,
-                conversacion,
-                NOTA_DE_ERROR.format(error=aviso, etiqueta=texto_etiqueta),
-            )
-            nota = "En la conversación hay una nota privada con este mismo error."
-        except Exception as e:
-            registro.error("[%s] no se pudo dejar la nota: %s", conversacion, e)
-            nota = "No se pudo dejar la nota privada en la conversación."
 
         await asyncio.to_thread(
             avisos.avisar,
@@ -317,7 +418,6 @@ def crear_app(
                     else f"No se pudo poner la etiqueta «{etiqueta}»: el agente le va "
                     "a volver a contestar si escribe de nuevo."
                 ),
-                nota=nota,
                 enlace=canal.enlace(conversacion),
                 causa=causa,
                 nombre_etiqueta=etiqueta,
@@ -336,11 +436,6 @@ def crear_app(
         )
         try:
             await asyncio.to_thread(canal.pasar_a_persona, conversacion)
-            await asyncio.to_thread(
-                canal.nota_privada,
-                conversacion,
-                NOTA_DE_TOPE.format(tope=tope.tope, etiqueta=etiqueta),
-            )
         except Exception as e:
             # Sin la etiqueta, pasado el rato de gracia la persona vuelve a
             # tener respuestas: eso sí hay que avisarlo.
@@ -355,6 +450,61 @@ def crear_app(
                 f"tope:{type(e).__name__}",
             )
 
+    async def marcar_resuelta(conversacion: str) -> None:
+        """La resolvieron: queda con la etiqueta, así el agente no le vuelve a hablar.
+
+        Hace falta porque, según cómo esté la bandeja, Chatwoot reabre ESA
+        misma conversación cuando la persona vuelve a escribir (y ahí ya no
+        figura como resuelta). La etiqueta, en cambio, se queda.
+        """
+        try:
+            await asyncio.to_thread(canal.pasar_a_persona, conversacion)
+            registro.info("[%s] la resolvieron: el agente no le vuelve a hablar", conversacion)
+        except Exception as e:
+            registro.error("[%s] no se pudo marcar como resuelta: %s", conversacion, e)
+
+    async def preparar(entrante: MensajeEntrante, revisar: bool, leer: bool) -> str:
+        """Lo que tarda, fuera del camino del 200: si ya se cerró con esa persona, y leer lo que no es texto.
+
+        Devuelve el texto para la ráfaga, o "" si no hay que contestar.
+        """
+        conversacion = entrante.conversacion
+        if revisar:
+            contacto = _contacto_del(entrante.datos)
+            if contacto and await asyncio.to_thread(canal.ya_la_cerro, contacto):
+                registro.info(
+                    "[%s] con esta persona ya se resolvió una conversación: no contesto",
+                    conversacion,
+                )
+                # La etiqueta va igual: en la bandeja se tiene que ver que el
+                # agente está callado a propósito y no que se colgó.
+                await marcar_resuelta(conversacion)
+                return ""
+
+        if not leer:
+            return entrante.texto
+
+        try:
+            leido = await asyncio.to_thread(lector.leer, entrante)
+        except Exception as e:
+            registro.error("[%s] no se pudo leer el mensaje: %s", conversacion, e)
+            return entrante.texto or "[La persona mandó algo que no se pudo leer: preguntale qué es.]"
+
+        if leido.a_una_persona:
+            registro.info("[%s] pasa a una persona: %s", conversacion, leido.a_una_persona)
+            try:
+                await asyncio.to_thread(canal.pasar_a_persona, conversacion)
+            except Exception as e:
+                registro.error("[%s] no se pudo pasar a una persona: %s", conversacion, e)
+        if leido.error:
+            await asyncio.to_thread(
+                avisos.avisar,
+                "El agente no pudo leer algo que le mandaron",
+                MAIL_DE_ADJUNTO.format(error=leido.error, enlace=canal.enlace(conversacion)),
+                f"adjunto:{leido.error[:60]}",
+            )
+        return leido.texto
+
     buffer = BufferDeMensajes(config.buffer_segundos, responder)
 
     @asynccontextmanager
@@ -365,7 +515,8 @@ def crear_app(
 
         registro.info(
             "Agente escuchando - %s / %s - memoria %s - buffer %ss - "
-            "%s mensaje(s) por respuesta - tope %s por día - avisos %s",
+            "%s mensaje(s) por respuesta - tope %s por día - avisos %s - "
+            "fotos %s - audios %s - resolver %s",
             config.proveedor,
             config.modelo,
             "Postgres" if config.modo == "produccion" else "SQLite",
@@ -373,6 +524,9 @@ def crear_app(
             config.mensajes_por_respuesta,
             config.tope_mensajes_por_dia or "sin",
             _como_avisa(avisos),
+            "sí" if getattr(lector, "describir", None) else "no",
+            "sí" if getattr(lector, "transcribir", None) else "no (falta OPENAI_API_KEY: pasan a una persona)",
+            "calla al agente" if config.respetar_resueltas else "no cambia nada",
         )
         cuidar_el_permiso = (
             asyncio.create_task(mantener_el_permiso(avisos))
@@ -399,6 +553,14 @@ def crear_app(
         openapi_url=None,
     )
 
+    def token_valido(token: str) -> bool:
+        # compare_digest y no "!=": el "!=" corta en la primera letra
+        # distinta, y midiendo cuánto tarda se puede adivinar la clave de a
+        # una letra. compare_digest tarda siempre lo mismo.
+        return secrets.compare_digest(
+            token.encode("utf-8"), config.chatwoot_webhook_token.encode("utf-8")
+        )
+
     # -- Las rutas -------------------------------------------------------------
 
     @app.get("/salud")
@@ -415,15 +577,49 @@ def crear_app(
             "memoria": "postgres" if config.modo == "produccion" else "sqlite",
         }
 
+    @app.post("/reset/{token}")
+    async def reset(token: str, pedido: Request) -> JSONResponse:
+        """Le borra la memoria a una conversación, para volver a probar desde cero.
+
+            curl -X POST https://tu-dominio.com/reset/<CHATWOOT_WEBHOOK_TOKEN> \\
+                 -H "Content-Type: application/json" -d '{"conversacion": "12"}'
+
+        El número es el de la conversación en Chatwoot (sale de su dirección).
+        Borra lo que el agente recuerda de esa charla y su cuenta del tope del
+        día: el próximo mensaje arranca como si nunca hubieran hablado. De a
+        una conversación por vez, a propósito: borrar todas de un saque, con
+        gente de verdad adentro, no tiene vuelta atrás.
+        """
+        if not token_valido(token):
+            registro.warning("Reset con token equivocado")
+            return JSONResponse({"error": "no autorizado"}, status_code=401)
+
+        cuerpo = await _leer_con_tope(pedido)
+        try:
+            datos = json.loads(cuerpo) if cuerpo else {}
+        except Exception:
+            datos = {}
+        conversacion = str((datos or {}).get("conversacion") if isinstance(datos, dict) else "").strip()
+        if not conversacion.isdigit():
+            return JSONResponse(
+                {"error": "falta 'conversacion': el número de la conversación en Chatwoot"},
+                status_code=400,
+            )
+
+        try:
+            await asyncio.to_thread(agente.olvidar, conversacion)
+        except Exception as e:
+            registro.error("[%s] no se pudo borrar la memoria: %s", conversacion, e)
+            return JSONResponse({"error": f"{type(e).__name__}: {e}"}, status_code=500)
+        tope.olvidar(conversacion)
+        revisadas.discard(conversacion)
+        registro.info("[%s] memoria borrada: arranca de cero", conversacion)
+        return JSONResponse({"estado": "ok", "conversacion": conversacion})
+
     @app.post("/chatwoot/{token}")
     async def entrante(token: str, pedido: Request) -> JSONResponse:
         """Por acá entra todo lo que manda Chatwoot."""
-        # compare_digest y no "!=": el "!=" corta en la primera letra
-        # distinta, y midiendo cuánto tarda se puede adivinar la clave de a
-        # una letra. compare_digest tarda siempre lo mismo.
-        if not secrets.compare_digest(
-            token.encode("utf-8"), config.chatwoot_webhook_token.encode("utf-8")
-        ):
+        if not token_valido(token):
             # Sin detalles en la respuesta: al que probó la URL no le decimos
             # si el token existe, si es corto o si le erró por una letra.
             registro.warning("Llamada con token equivocado")
@@ -441,6 +637,20 @@ def crear_app(
         if not isinstance(evento, dict):
             return JSONResponse({"error": "esperaba un objeto JSON"}, status_code=400)
 
+        # Resolvieron una conversación: si se eligió así al instalar, queda
+        # con la etiqueta y el agente no le vuelve a hablar a esa persona.
+        if evento.get("event") == "conversation_status_changed":
+            id_conversacion = evento.get("id")
+            if (
+                config.respetar_resueltas
+                and str(evento.get("status") or "").strip().lower() == "resolved"
+                and not isinstance(id_conversacion, bool)
+                and str(id_conversacion or "").isdigit()
+            ):
+                en_segundo_plano(marcar_resuelta(str(id_conversacion)))
+                return JSONResponse({"estado": "resuelta"})
+            return JSONResponse({"estado": "ignorado"})
+
         entrante = canal.traducir(evento)
 
         if entrante is None or not canal.deberia_responder(entrante):
@@ -455,8 +665,22 @@ def crear_app(
         if decision == IGNORAR:
             return JSONResponse({"estado": "tope"})
 
-        # Se suma a la ráfaga y contestamos ya. Lo que sigue pasa solo.
-        await buffer.agregar(entrante.conversacion, entrante.texto)
+        wamid = wamid_del_evento(evento)
+        if wamid:
+            ultimo_wamid[entrante.conversacion] = wamid
+
+        # Lo que tarda (preguntar si ya se cerró con esa persona, bajar y leer
+        # una foto o un audio, buscar un mensaje citado) va en segundo plano,
+        # pero en SU lugar de la ráfaga: el orden es el de llegada.
+        revisar = config.respetar_resueltas and entrante.conversacion not in revisadas
+        if revisar:
+            revisadas.add(entrante.conversacion)
+        leer = Lector.hay_que_leer(entrante)
+        if revisar or leer:
+            parte = en_segundo_plano(preparar(entrante, revisar, leer))
+            await buffer.agregar(entrante.conversacion, parte)
+        else:
+            await buffer.agregar(entrante.conversacion, entrante.texto)
 
         return JSONResponse({"estado": "recibido"})
 
@@ -493,10 +717,10 @@ class TaparElToken(logging.Filter):
 
     Tapa la clave misma, esté donde esté en el mensaje (también en una
     dirección mal escrita, como `/Chatwoot/<clave>` o `?token=<clave>`), y
-    además cualquier cosa con la forma `/chatwoot/<algo>`.
+    además cualquier cosa con la forma `/chatwoot/<algo>` o `/reset/<algo>`.
     """
 
-    _DIRECCION = re.compile(r"(/chatwoot/)[^/\s?\"]+", re.IGNORECASE)
+    _DIRECCION = re.compile(r"(/(?:chatwoot|reset)/)[^/\s?\"]+", re.IGNORECASE)
 
     def __init__(self, token: str = "") -> None:
         super().__init__()
