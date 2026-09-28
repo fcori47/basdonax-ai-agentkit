@@ -1,5 +1,5 @@
-# Las versiones están acotadas a propósito: este repo vive en la
-# descripción de un video y no se tiene que romper solo cuando salga
+# Las versiones están acotadas a propósito: este repo lo instala gente que
+# no lo va a mantener, y no se tiene que romper solo cuando salga
 # la próxima versión mayor de LangChain.
 
 # --- LangChain + LangGraph -------------------------------------------------

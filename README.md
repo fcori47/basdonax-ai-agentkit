@@ -1,48 +1,190 @@
-# AgentKit
+<p align="center">
+  <img src="docs/img/portada.png" alt="Agent Kit de Basdonax AI: tu agente de IA en WhatsApp, listo para producción y para lo que cobra Meta" width="100%">
+</p>
 
-Un agente de IA que corre **en tu computadora**. Sin servidor, sin hosting,
-sin pagar infraestructura. Funciona con **Claude, OpenAI o Gemini** —
-elegís cuál desde una lista, sin tocar código.
+# Agent Kit
 
-Además de conversar, **sabe el clima**: preguntale cómo está el tiempo en
-cualquier ciudad y sale a buscarlo. No hace falta ninguna clave más para eso.
+Un agente de IA hecho en código para que lo manejes con **Claude Code**.
+Arranca en tu computadora, sin servidor: Telegram lo atiende desde ahí mismo;
+para **WhatsApp**, lo subís a un servidor tuyo. Funciona con **Claude, OpenAI
+o Gemini**: los elegís de una lista, sin tocar código.
 
-Viene con una plataforma de pruebas: una web local donde le hablás al agente,
-cambiás de modelo en caliente, editás su personalidad y ves cuántos tokens
-gastás en cada mensaje.
+No es una demo. Trae lo que separa a un bot de prueba de uno que atiende
+clientes todos los días: junta los mensajes cortados, se calla con un clic
+cuando alguien del equipo toma la conversación, no se contesta a sí mismo,
+frena al que charla de más y, si algo se rompe, el cliente no ve el error y a
+vos te llega un mail.
 
-```
-┌──────────────────────────────────────────────────┐
-│  Vos escribís                                     │
-│      ↓                                            │
-│  Prompt del sistema  ← prompts/sistema.md         │
-│  Memoria             ← LangGraph (thread_id)      │
-│  Modelo              ← Claude / OpenAI / Gemini   │
-│  Herramientas        ← el clima                   │
-│      ↓                                            │
-│  El agente responde                               │
-└──────────────────────────────────────────────────┘
-```
+> **La versión 1.1 ya contempla el cambio de Meta del 1 de octubre de 2026:**
+> desde ese día Meta cobra los mensajes que manda el agente, pasados los 1.000
+> gratis del mes. Al instalarlo elegís si responde como una persona, en varios
+> mensajes, o todo en uno, y te guía para dejar lista la cuenta de Meta.
+> [Cómo funciona →](#lo-de-meta-desde-el-1-de-octubre-cada-mensaje-se-cobra)
+
+<p align="center">
+  <img src="docs/img/mapa.png" alt="Cómo viaja un mensaje: de WhatsApp a Chatwoot, al agente, y de vuelta" width="100%">
+</p>
+
+---
+
+## Si no sos técnico: instalalo con Claude Code
+
+1. Bajá este repo (en GitHub: botón verde **Code** → **Download ZIP**) y
+   descomprimilo.
+2. Abrí esa carpeta con Claude Code y decile: **«ayudame a instalar el agente
+   para WhatsApp»**.
+3. Antes de tocar nada te hace cuatro preguntas: si responde como una persona
+   o en un solo mensaje, si tenés la tarjeta cargada en Meta, cuántos mensajes
+   de una misma persona atiende por día y a qué mail te avisa si algo se
+   rompe. Lo que no tengas hecho, te guía hasta que quede.
+4. Cierra con un mail de prueba desde el servidor: si llega, los avisos
+   funcionan.
+
+Para WhatsApp vas a necesitar:
+
+- **Chatwoot**, con tu número de WhatsApp conectado por la API oficial de Meta.
+- **Un servidor con dominio y HTTPS** (por ejemplo, con Coolify) y una base
+  **Postgres**.
+- **Una clave** de Claude, OpenAI o Gemini, con saldo.
+- **Una tarjeta de crédito Visa o Mastercard cargada en Meta** (abajo, por qué).
+- **Una cuenta de mail** para los avisos (con Gmail alcanza).
 
 ---
 
 ## Índice
 
-1. [Arrancar en 3 pasos](#arrancar-en-3-pasos)
-2. [Qué hay adentro](#qué-hay-adentro)
-3. [Elegir el modelo](#elegir-el-modelo)
-4. [La barra de ajustes](#la-barra-de-ajustes)
-5. [La memoria: cómo funciona](#la-memoria-cómo-funciona)
-6. [Modo test y modo producción](#modo-test-y-modo-producción)
-7. [El caché: gastar menos](#el-caché-gastar-menos)
-8. [El clima: la primera herramienta](#el-clima-la-primera-herramienta)
-9. [Ponerlo en Telegram](#ponerlo-en-telegram)
-10. [Ponerlo en WhatsApp](#ponerlo-en-whatsapp)
-11. [Dejarlo corriendo en un servidor](#dejarlo-corriendo-en-un-servidor)
-12. [Cambiar la personalidad](#cambiar-la-personalidad)
-13. [Usarlo desde tu código](#usarlo-desde-tu-código)
-14. [Todas las variables del .env](#todas-las-variables-del-env)
-15. [Preguntas que aparecen siempre](#preguntas-que-aparecen-siempre)
+1. [Si no sos técnico: instalalo con Claude Code](#si-no-sos-técnico-instalalo-con-claude-code)
+2. [Novedades de la 1.1](#novedades-de-la-11)
+3. [Lo de Meta: desde el 1 de octubre, cada mensaje se cobra](#lo-de-meta-desde-el-1-de-octubre-cada-mensaje-se-cobra)
+4. [¿Tu agente está en n8n? Hay un actualizador](#tu-agente-está-en-n8n-hay-un-actualizador)
+5. [Arrancar en 3 pasos](#arrancar-en-3-pasos)
+6. [Qué hay adentro](#qué-hay-adentro)
+7. [Elegir el modelo](#elegir-el-modelo)
+8. [La barra de ajustes](#la-barra-de-ajustes)
+9. [La memoria: cómo funciona](#la-memoria-cómo-funciona)
+10. [Modo test y modo producción](#modo-test-y-modo-producción)
+11. [El caché: gastar menos](#el-caché-gastar-menos)
+12. [El clima: la primera herramienta](#el-clima-la-primera-herramienta)
+13. [Ponerlo en Telegram](#ponerlo-en-telegram)
+14. [Cuatro decisiones antes de desplegar](#cuatro-decisiones-antes-de-desplegar)
+15. [Ponerlo en WhatsApp](#ponerlo-en-whatsapp)
+16. [Dejarlo corriendo en un servidor](#dejarlo-corriendo-en-un-servidor)
+17. [Cambiar la personalidad](#cambiar-la-personalidad)
+18. [Usarlo desde tu código](#usarlo-desde-tu-código)
+19. [Todas las variables del .env](#todas-las-variables-del-env)
+20. [Preguntas que aparecen siempre](#preguntas-que-aparecen-siempre)
+
+---
+
+## Novedades de la 1.1
+
+- **Elegís cómo responde:** como una persona (hasta 3 mensajes) o todo en
+  uno. Lo pregunta la instalación y te explica lo que cuesta cada opción.
+- **Tope de mensajes por conversación y por día:** el que charla de cualquier
+  cosa pasa a una persona del equipo y el agente deja de gastar.
+- **Si algo se rompe, el cliente no ve el error:** la conversación pasa a una
+  persona, queda una nota privada en Chatwoot y te llega un mail.
+  `python probar_mail.py` lo prueba antes de dar la instalación por terminada.
+- **Más seguro:** la clave del webhook ya no queda en los registros del
+  servidor y tiene que ser larga (si no, el agente no arranca); un pedido de
+  más de medio mega se descarta sin terminar de leerlo; un texto pegado enorme
+  se recorta a 2.000 caracteres antes de llegar al modelo; y el mail de avisos
+  verifica el certificado del servidor de correo.
+- **Ningún mensaje pasa los 4.096 caracteres**, el tope de WhatsApp: uno más
+  largo, Meta no lo entrega.
+- **¿Tu agente está en n8n?** Claude Code te lo actualiza con una skill que
+  viene en este repo. [Está más abajo](#tu-agente-está-en-n8n-hay-un-actualizador).
+
+<p align="center">
+  <img src="docs/img/cuando-se-rompe.png" alt="Cuando algo se rompe: el cliente no ve el error, queda una nota privada y te llega un mail" width="100%">
+</p>
+
+---
+
+## Lo de Meta: desde el 1 de octubre, cada mensaje se cobra
+
+Hasta el 30 de septiembre de 2026, lo que el agente contestaba adentro de las
+24 horas de una conversación era gratis (lo fue desde noviembre de 2024).
+**Desde el 1 de octubre de 2026, Meta cobra los mensajes que manda el
+agente.** Lo que cambia para vos:
+
+- **Cada número tiene 1.000 mensajes gratis por mes para contestar** (Meta los
+  llama «de servicio»: los que manda el agente dentro de una charla que empezó
+  el cliente). No se acumulan de un mes al otro. Después se paga cada mensaje
+  entregado, a un precio que pone Meta según el código de país del número que
+  recibe. Las plantillas (campañas, recordatorios) van aparte y no entran en
+  esos 1.000.
+- **Lo que entra por un anuncio de clic a WhatsApp (o por el botón de
+  WhatsApp de tu página de Facebook) es gratis durante 72 horas**, se manden
+  los mensajes que se manden. Las 72 horas corren desde la primera respuesta,
+  que tiene que salir dentro de las 24 horas (el agente contesta en segundos),
+  y la persona tiene que escribir desde la app del celular: desde WhatsApp Web
+  o la compu no cuenta. Si casi toda tu gente llega por anuncios, el cambio te
+  toca poco: se paga lo que te escriben directo, como el que vuelve a comprar
+  semanas después.
+- **Sin un método de pago en Meta, pasados los 1.000 del mes, las respuestas
+  del agente dejan de llegar.** Meta las frena después de que Chatwoot ya las
+  aceptó, así que el agente no se entera, el cliente se queda sin respuesta y
+  a vos no te llega ningún mail. Es el golpe real del cambio, y el kit no lo
+  puede detectar: por eso la tarjeta se carga antes.
+
+Y un detalle que casi nadie mira: un agente que parte cada respuesta en tres
+globos para parecer una persona **paga hasta tres mensajes en vez de uno**.
+Por eso ahora lo elegís:
+
+<p align="center">
+  <img src="docs/img/tres-o-uno.png" alt="La misma respuesta en 3 mensajes o en 1, y cuántos cuenta Meta en cada caso" width="100%">
+</p>
+
+No hay una respuesta correcta: tres globos se leen más humanos, uno solo
+cuesta menos. En respuestas cortas, un mensaje con saltos de línea se lee
+bien; en las largas, un solo bloque se parece más a un mail. **Lo elegís al
+instalar** (`MENSAJES_POR_RESPUESTA`). En el mismo momento se revisa la
+tarjeta y se definen el tope de mensajes por día y el mail de avisos: está
+todo en [Cuatro decisiones antes de desplegar](#cuatro-decisiones-antes-de-desplegar).
+
+---
+
+## ¿Tu agente está en n8n? Hay un actualizador
+
+Si armaste tu agente en n8n con un nodo **«Format Chain»** (el que limpia la
+respuesta y la parte en varios mensajes), este repo trae un actualizador para
+adaptarlo al cobro de Meta sin romper nada. Es una skill de Claude Code:
+
+1. Bajá este repo (en GitHub: botón verde **Code** → **Download ZIP**) y
+   descomprimilo. Si preferís usarlo desde tu propio proyecto, copiá la
+   carpeta `.claude/skills/actualizar-agente-whatsapp` adentro de
+   `.claude/skills/` de ese proyecto (está explicado en su
+   [`LEEME.md`](.claude/skills/actualizar-agente-whatsapp/LEEME.md)).
+2. Abrí esa carpeta con Claude Code y decile: **«actualizá mi agente de
+   WhatsApp, que está en n8n»**.
+
+Para que lo haga por la API de n8n hace falta Python 3 en tu computadora; si
+no lo tenés, te guía para hacerlo a mano adentro de n8n. Claude Code te
+pregunta primero dónde está tu agente y sigue el camino que corresponde:
+
+| Si tu agente está… | Lo que hace |
+|---|---|
+| **En n8n, con una clave de la API** | Busca los flujos con Format Chain, respalda cada uno, le pone la versión nueva (o, si la tocaste, le agrega solo la elección sin tocar tus filtros), verifica y lo publica |
+| **En n8n, pero preferís no crear una clave** | Te guía paso a paso adentro de n8n: duplicar el flujo, pegar el código, elegir, guardar y publicar |
+| **En este kit** | Trae la versión nueva sin pisar tu `.env` ni tu prompt, y te hace las cuatro preguntas de la instalación |
+| **Todavía no lo armaste** | Te explica el cambio y te guía para cargar la tarjeta en Meta |
+
+En todos los casos te explica qué cambia, te pregunta cómo querés que
+responda y **te guía para cargar la tarjeta en Meta** si no la tenés. Nunca
+prende ni apaga un flujo y nunca toca otros nodos. **La clave de n8n la cargás
+vos** en un archivo que no se sube a ningún lado: Claude Code no la ve, y al
+terminar te recuerda borrarla.
+
+**¿Sin Claude Code?** El código está en [`n8n/format_chain_v4.js`](n8n/format_chain_v4.js).
+Duplicá tu flujo (ese duplicado es tu respaldo), abrí el nodo «Format Chain»
+del original y reemplazá su código por este. Elegí las dos opciones de arriba
+de todo (`FORMA_DE_RESPONDER` y `MAXIMO_DE_MENSAJES`), guardá y, si tu n8n
+tiene el botón **Publish**, tocalo. Ojo: si le habías hecho cambios propios a
+tu Format Chain, pegar este código los pisa; en ese caso, mejor que lo haga
+Claude Code. Con el máximo en 5 sale igual que la versión anterior (la v3.2),
+y la salida es la misma (`part_1` a `part_5`), así que el resto del flujo no
+se toca.
 
 ---
 
@@ -119,7 +261,9 @@ basdonax-ai-agentkit/
 │   ├── modelos.py          ← Claude / OpenAI / Gemini
 │   ├── memoria.py          ← dónde se guardan las conversaciones
 │   ├── prompts.py          ← lee el prompt del archivo
-│   ├── respuesta.py        ← parte una respuesta larga en varios mensajes
+│   ├── respuesta.py        ← la respuesta en varios mensajes, o en uno
+│   ├── frenos.py           ← el tope de mensajes por persona y por día
+│   ├── avisos.py           ← el mail cuando algo se rompe
 │   ├── config.py           ← lee el .env
 │   ├── canales/
 │   │   ├── base.py         ← la forma de un canal
@@ -129,11 +273,17 @@ basdonax-ai-agentkit/
 │   └── web/
 │       ├── app.py          ← la plataforma de pruebas
 │       └── webhook.py      ← el servidor que atiende WhatsApp
-├── tests/                  ← 103 tests que no gastan un solo token
+├── tests/                  ← los tests: ninguno gasta un solo token
+├── n8n/
+│   └── format_chain_v4.js  ← la Format Chain nueva, para pegar en n8n
+├── .claude/skills/
+│   └── actualizar-agente-whatsapp/  ← el actualizador (Claude Code)
+├── docs/img/               ← las imágenes de este README
 ├── chat.py                 ← hablarle desde la terminal
 ├── servidor.py             ← levantar la web
 ├── bot_telegram.py         ← levantar el bot de Telegram
 ├── webhook_chatwoot.py     ← levantar el webhook de WhatsApp
+├── probar_mail.py          ← mandar un mail de prueba de los avisos
 ├── AGENTS.md               ← contexto para Codex, Claude Code, Cursor…
 ├── CLAUDE.md               ← apunta a AGENTS.md
 └── .env                    ← tus claves (no se sube)
@@ -210,8 +360,8 @@ LangGraph resuelve eso con dos ideas:
 - **checkpointer** — dónde se guardan esas conversaciones.
 
 ```python
-agente.responder("Hola, me llamo Facu", conversacion="chat-1")
-agente.responder("¿Cómo me llamo?",     conversacion="chat-1")  # → "Facu"
+agente.responder("Hola, me llamo Martina", conversacion="chat-1")
+agente.responder("¿Cómo me llamo?",     conversacion="chat-1")  # → "Martina"
 agente.responder("¿Cómo me llamo?",     conversacion="chat-2")  # → no sabe
 ```
 
@@ -244,8 +394,10 @@ cualquiera y después preguntale cómo te llamás. No se va a acordar.
 Una sola variable decide dónde se guardan las conversaciones:
 
 ```bash
-MODO=test        # SQLite: un archivo. No instalás nada.
-MODO=produccion  # Postgres: para varios procesos atendiendo a la vez.
+# SQLite: un archivo. No instalás nada.
+MODO=test
+# Postgres: para varios procesos atendiendo a la vez.
+MODO=produccion
 ```
 
 |  | `test` | `produccion` |
@@ -309,7 +461,8 @@ El caché hace que el proveedor lo guarde de su lado y te cobre una fracción a
 partir del segundo mensaje.
 
 ```bash
-CACHE=true    # en el .env — viene activado, dejalo así
+# en el .env: viene activado, dejalo así
+CACHE=true
 ```
 
 | Proveedor | Cómo funciona |
@@ -376,7 +529,7 @@ Hasta acá el agente vivía en tu navegador. Con esto lo tenés en el teléfono,
 
 **1. Pedile un bot a Telegram.** Abrí [@BotFather](https://t.me/BotFather),
 mandale `/newbot` y seguile la conversación. Al final te da un token, que es
-una tira larga tipo `8983476848:AAG4j4...`.
+una tira larga tipo `123456789:ABCdef...`.
 
 **2. Pegalo en el `.env`:**
 
@@ -439,9 +592,118 @@ es un archivo y no le gusta que varios procesos le escriban al mismo tiempo.
 
 ---
 
+## Cuatro decisiones antes de desplegar
+
+Si lo instalás con Claude Code, te las pregunta él y te guía en lo que
+falte. Si lo hacés a mano, son estas.
+
+**1. ¿Responde como una persona o en un solo mensaje?**
+
+Desde el **1 de octubre de 2026, Meta cobra los mensajes que manda el
+agente**, pasados los 1.000 gratis de cada mes por número. Tres globos cortos
+se leen como una persona, pero son hasta tres mensajes cobrados; uno solo
+cuesta, como mucho, un tercio (muchas respuestas cortas salen en un globo
+igual) y se lee menos humano.
+
+Si la gente te llega por **anuncios de clic a WhatsApp** y escribe desde el
+celular, esa conversación es gratis durante 72 horas desde la primera
+respuesta, y la diferencia casi no se siente. Donde pesa es en lo que entra
+directo: la web, la bio, el boca a boca.
+
+```bash
+# como una persona, hasta 3 globos (va de 1 a 5)
+MENSAJES_POR_RESPUESTA=3
+# o todo en un solo mensaje
+MENSAJES_POR_RESPUESTA=1
+```
+
+**2. ¿Tenés una tarjeta cargada en Meta?**
+
+Sin tarjeta, pasados los 1.000 mensajes gratis del mes, Meta **deja de
+entregar** lo que manda el agente. El kit no se entera (Chatwoot ya había
+aceptado el mensaje) y no te manda mail. Se carga así (pasos de la ayuda
+oficial de Meta):
+
+1. Entrá al administrador de WhatsApp: https://business.facebook.com/wa/manage/home/
+2. En la información general, buscá tu cuenta y hacé clic en los tres puntos.
+3. **Administrar la configuración de la cuenta** → **Configuración** →
+   **Configuración de pago**.
+4. **Añadir método de pago**: los datos de pago, la tarjeta y los de la
+   empresa, guardando en cada paso.
+
+Meta está cambiando esta parte: la versión en inglés del mismo artículo ya
+muestra otro camino, **Meta Business Suite → Configuración → la sección de
+pagos (*Billing & payments*) → cuentas de mensajería (*Messaging accounts*) →
+Añadir método de pago**. Si no encontrás «Configuración de pago», probá por ahí.
+
+Hace falta permiso para administrar los pagos de esa cuenta (el dueño ya lo
+tiene) y una tarjeta de crédito Visa o Mastercard: no aceptan American Express
+ni PayPal. Puede que te pidan los datos fiscales de la empresa. Queda bien
+cuando la tarjeta aparece en la pestaña **Configuración**.
+
+**3. ¿Cuántos mensajes de una misma persona atiende por día?**
+
+Hay gente que se queda charlando de cualquier cosa con el agente, y cada
+respuesta se paga. Se cuentan los mensajes que **manda la persona** en esa
+conversación, en las últimas 24 horas, no las respuestas: el que escribe en
+ráfagas («hola» / «una consulta» / «por el precio») suma tres aunque el agente
+conteste una vez. Al pasar el tope, el agente le pone la etiqueta `humano`,
+deja una nota privada contando por qué y se calla ahí. **No se destraba solo
+al otro día:** vuelve a contestar cuando alguien del equipo le saca la
+etiqueta.
+
+```bash
+# 0 = sin tope
+TOPE_MENSAJES_POR_DIA=50
+```
+
+Es un freno para la charla de más, no un límite de gasto: para eso, poné
+también un tope de gasto en la consola del proveedor del modelo.
+
+**4. ¿A qué mail te avisa si algo se rompe?**
+
+Si falla el modelo (una clave vencida, sin saldo) o Chatwoot no acepta la
+respuesta, **la persona que escribió no ve ningún error**: la conversación
+pasa a `humano`, queda una nota privada con el error y te llega un mail. De un
+mismo error sale un mail por hora como mucho, no uno por cada persona.
+
+```bash
+AVISOS_EMAIL=vos@tuempresa.com
+SMTP_SERVIDOR=smtp.gmail.com
+SMTP_PUERTO=587
+SMTP_USUARIO=la-cuenta-que-manda@gmail.com
+SMTP_CLAVE=una-contraseña-de-aplicación
+```
+
+Con Gmail, la clave **no es la tuya de siempre**: es una contraseña de
+aplicación de 16 letras que sacás en https://myaccount.google.com/apppasswords
+(hace falta tener la verificación en dos pasos activada; los espacios que
+muestra Google no importan). No hace falta nada de Google Cloud. Si tu mail es
+del trabajo (Google Workspace) o usás solo llaves de seguridad, puede que
+Google no te deje crearla: usá una cuenta de Gmail común solo para los avisos.
+Y si algún día cambiás la contraseña de esa cuenta, Google borra las
+contraseñas de aplicación y los avisos dejan de salir: creá otra y volvé a
+probar. Si dejás `AVISOS_EMAIL` vacío, todo lo demás funciona igual y el
+aviso queda solo en los registros del servidor.
+
+Y probalo **en el servidor donde corre el agente**, antes de dar la
+instalación por terminada. En Coolify, desde la terminal de la aplicación;
+con Docker:
+
+```bash
+docker exec agente python probar_mail.py
+```
+
+Si el mail llega desde ahí, los avisos también. Probarlo en tu computadora
+sirve para revisar la clave, pero no prueba que el servidor pueda mandar
+mails: hay proveedores que cierran esa salida. Si falla, el script te dice qué
+pasó (la clave equivocada es lo más común la primera vez).
+
+---
+
 ## Ponerlo en WhatsApp
 
-Acá el agente deja de ser una demo y pasa a atender clientes.
+Acá el agente pasa a atender clientes de verdad.
 
 **El agente no le habla a Meta: le habla a Chatwoot.** Esa es la decisión que
 hace que todo lo demás sea más fácil.
@@ -485,11 +747,16 @@ CHATWOOT_WEBHOOK_TOKEN=un-secreto-largo-y-al-azar
 - **El token** sale de tu foto de perfil → *Configuración del perfil* → abajo
   de todo, **Token de acceso a la API**.
 - **La cuenta** es el número que ves en la URL: `/app/accounts/1/...`
-- **El secreto del webhook** generalo, no lo escribas a mano:
+- **El secreto del webhook** generalo, no lo escribas a mano (si dejás el
+  del ejemplo o uno corto, el agente no arranca):
 
   ```bash
   python -c "import secrets; print(secrets.token_hex(24))"
   ```
+
+Y antes de desplegar, las [cuatro decisiones](#cuatro-decisiones-antes-de-desplegar):
+cómo responde, la tarjeta en Meta, el tope de mensajes por día y el mail de
+avisos.
 
 ### 3. Desplegalo
 
@@ -520,8 +787,8 @@ cada cambio de estado y cada actualización de contacto para nada.
 **El token va pegado en la URL, no en un campo aparte.** Chatwoot no firma sus
 webhooks —no tiene un secreto compartido como Meta—, así que esa tira en la
 dirección es lo único que separa un mensaje de verdad de cualquiera que
-descubra tu dominio. Si la URL no lo lleva, el agente contesta **401** y no
-pasa nada.
+descubra tu dominio. Si la URL no lo lleva, el agente contesta **404**; si lo
+lleva mal, **401**. En los dos casos no pasa nada.
 
 ### 5. La etiqueta `humano`
 
@@ -533,13 +800,22 @@ se calla en ese chat**. Es el traspaso a una persona, y es *el* diferencial de
 tener Chatwoot — se hace con un clic, sin tocar el servidor ni reiniciar nada.
 Se la sacás y el bot vuelve.
 
+El agente también se la pone solo en dos casos: **cuando algo se rompe** y
+**cuando alguien pasa el tope de mensajes del día**. En los dos deja una nota
+privada en la conversación diciendo por qué.
+
+Ojo con los cortes: si se vence la clave o se acaba el saldo, cada
+conversación que escriba en ese rato queda con `humano`. Cuando lo arregles,
+filtrá por esa etiqueta en Chatwoot y sacásela a las que quieras devolverle
+al agente.
+
 ### Probalo
 
 Escribile al número desde tu teléfono. Vas a ver la respuesta en WhatsApp y en
 la bandeja de Chatwoot.
 
-Si no contesta, mirá los logs del contenedor: cada mensaje que entra deja una
-línea con el número de conversación y el texto.
+Si no contesta, mirá los registros del contenedor (en Coolify, *Logs*): cada
+mensaje que entra deja una línea con el número de conversación y el texto.
 
 ### Lo que ya está resuelto
 
@@ -555,6 +831,18 @@ línea con el número de conversación y el texto.
 - **No contesta las notas privadas**: esas son del equipo.
 - **Cada conversación tiene su memoria**, con el id de Chatwoot como
   `thread_id`.
+- **El cliente nunca ve un error técnico.** Va a la nota privada y a tu mail,
+  y la conversación pasa a una persona.
+- **Tope de mensajes por conversación y por día** (`TOPE_MENSAJES_POR_DIA`),
+  para el que se queda charlando de cualquier cosa.
+- **Un texto pegado enorme se recorta** a 2.000 caracteres antes de llegar al
+  modelo (`LARGO_MAXIMO_DE_ENTRADA`): si no, se pagaría en ese mensaje y en
+  todos los que siguen, porque queda en la memoria.
+- **La clave del webhook no queda en los registros** (se ve `/chatwoot/***`),
+  y si falta, es corta o es la del ejemplo, el agente no arranca. Un pedido de
+  más de medio mega se descarta sin terminar de leerlo.
+- **Ningún mensaje pasa los 4.096 caracteres**, el tope de WhatsApp: uno más
+  largo, Meta no lo entrega.
 
 ---
 
@@ -572,7 +860,7 @@ lo que más confunde, así que va en una tabla:
 | Cómo llegan los mensajes | Chatwoot le pega a tu URL | El bot sale a buscarlos |
 | ¿Dominio? | **Sí, obligatorio** | **No, y si te asignan uno, borralo** |
 | ¿Puerto? | El 8000 | Ninguno |
-| Health check | Prendido, en `/salud` | **Apagado** |
+| Chequeo de salud (*Health check*) | Prendido, en `/salud` | **Apagado** |
 
 **El `Dockerfile` del repo corre el webhook de WhatsApp**, que es el caso que
 necesita servidor de verdad. Si querés desplegar el bot de Telegram, cambiale
@@ -590,7 +878,7 @@ docker run -d --env-file .env -p 8000:8000 --name agente agente
 2. Creá una aplicación de tipo **Dockerfile** apuntando a ese repo.
 3. **Ponele el dominio** que va a usar el webhook, y dejá el puerto en `8000`.
    (Si desplegás el bot de Telegram, este paso es al revés: sacale el dominio.)
-4. **Health check en `/salud`**, con el puerto 8000.
+4. **El chequeo de salud (*Health check*) en `/salud`**, con el puerto 8000.
 5. Cargá las variables en el panel — **el `.env` no se sube al repo**:
 
    ```
@@ -599,7 +887,13 @@ docker run -d --env-file .env -p 8000:8000 --name agente agente
    CACHE · MAX_TOKENS · MEMORIA_MENSAJES · PROMPT_SISTEMA
    CHATWOOT_URL · CHATWOOT_TOKEN · CHATWOOT_CUENTA_ID
    CHATWOOT_WEBHOOK_TOKEN · CHATWOOT_ETIQUETA_HUMANO · BUFFER_SEGUNDOS
+   MENSAJES_POR_RESPUESTA · TOPE_MENSAJES_POR_DIA · LARGO_MAXIMO_DE_ENTRADA
+   AVISOS_EMAIL · SMTP_SERVIDOR · SMTP_PUERTO · SMTP_USUARIO · SMTP_CLAVE
    ```
+
+   Esos dos últimos renglones son las cuatro decisiones: si falta
+   `TOPE_MENSAJES_POR_DIA`, el agente queda sin tope, y si falta
+   `AVISOS_EMAIL`, no te llega ningún mail.
 
 6. Desplegá, y entrá a `https://tu-dominio.com/salud` para confirmar.
 
@@ -610,11 +904,11 @@ sale a internet para volver a entrar.
 ### Tres cosas para no comerte
 
 **`MODO=produccion`, o vas a perder las conversaciones.** En un contenedor,
-SQLite vive en el disco del contenedor, y ese disco se borra en cada deploy.
+SQLite vive en el disco del contenedor, y ese disco se borra en cada despliegue.
 Con Postgres la memoria sobrevive a los despliegues.
 
 **Si el panel te dice que el contenedor está *unhealthy* pero arranca bien,
-es `curl`.** El health check de un PaaS le pega a la URL **desde adentro** del
+es `curl`.** El chequeo de salud de un PaaS le pega a la URL **desde adentro** del
 contenedor, con `curl` o `wget`, y las imágenes `slim` de Python no traen
 ninguno de los dos. El contenedor levanta, atiende perfecto, y el panel lo da
 de baja igual con un *"New container is not healthy, rolling back"* que no
@@ -634,7 +928,7 @@ URL es una sola.)
 git push
 ```
 
-Y redesplegás desde el panel. El código nuevo entra en el próximo deploy; la
+Y redesplegás desde el panel. El código nuevo entra en el próximo despliegue; la
 conversación de cada persona sigue intacta, porque vive en Postgres y no en
 el contenedor.
 
@@ -717,7 +1011,7 @@ la herramienta le sirve. Si está mal escrito, la herramienta no se usa nunca.
 | `ANTHROPIC_API_KEY` | — | Tu clave de Claude |
 | `OPENAI_API_KEY` | — | Tu clave de OpenAI |
 | `GOOGLE_API_KEY` | — | Tu clave de Gemini |
-| `MODELO_CLAUDE` | `claude-opus-5` | Qué modelo de Claude usar |
+| `MODELO_CLAUDE` | `claude-opus-5` | Qué modelo de Claude usar (el `.env.example` trae `claude-haiku-4-5`, el más barato para probar) |
 | `MODELO_OPENAI` | `gpt-5` | Qué modelo de OpenAI usar |
 | `MODELO_GEMINI` | `gemini-2.5-pro` | Qué modelo de Gemini usar |
 | `MODO` | `test` | `test` (SQLite) o `produccion` (Postgres) |
@@ -739,6 +1033,14 @@ Y estas, solo si vas a atender WhatsApp con `webhook_chatwoot.py`:
 | `CHATWOOT_WEBHOOK_TOKEN` | — | El secreto que va en la URL del webhook |
 | `CHATWOOT_ETIQUETA_HUMANO` | `humano` | La etiqueta que apaga al bot en una conversación |
 | `BUFFER_SEGUNDOS` | `8` | Cuánto espera juntando la ráfaga antes de contestar |
+| `MENSAJES_POR_RESPUESTA` | `3` | De `1` (todo en un mensaje) a `5`. `3` = como una persona, en varios globos. Meta cobra por mensaje |
+| `TOPE_MENSAJES_POR_DIA` | `0` (el `.env.example` trae `50`) | Cuántos mensajes de una misma conversación atiende en 24 h antes de pasarla a `humano` (cuentan los que manda la persona, no las respuestas). `0` = sin tope |
+| `LARGO_MAXIMO_DE_ENTRADA` | `2000` | Lo que entra se recorta a este largo antes de llegar al modelo |
+| `AVISOS_EMAIL` | — | A quién le llega el mail cuando algo se rompe |
+| `SMTP_SERVIDOR` | — (el `.env.example` trae `smtp.gmail.com`) | Por dónde sale ese mail |
+| `SMTP_PUERTO` | `587` | `587` (STARTTLS) o `465` (cifrado desde el arranque) |
+| `SMTP_USUARIO` | — | La cuenta que manda el mail |
+| `SMTP_CLAVE` | — | Su clave (en Gmail, una contraseña de aplicación: los espacios no importan) |
 | `PUERTO` | `8000` | Dónde escucha el webhook |
 
 **No hace falta ninguna variable de Meta** (`WHATSAPP_TOKEN`, `APP_SECRET` y
@@ -749,8 +1051,10 @@ compañía): el agente le habla a Chatwoot, y Chatwoot es el que le habla a Meta
 ## Preguntas que aparecen siempre
 
 **¿Necesito pagar un servidor?**
-No. Corre en tu computadora. Lo único que pagás es el consumo del modelo
-(y Gemini tiene un plan gratis para empezar).
+Para probarlo o para Telegram, no: corre en tu computadora y pagás solo el
+consumo del modelo (Gemini tiene un plan gratis para empezar). Para WhatsApp,
+sí: Chatwoot tiene que poder llegar a tu agente por internet, así que va en un
+servidor con dominio y HTTPS.
 
 **¿Funciona sin internet?**
 Con estos tres proveedores no, porque el modelo corre en la nube de ellos.
@@ -766,6 +1070,14 @@ mensaje. Tres formas de gastar menos, de mayor a menor impacto:
 1. Usar un modelo más chico (los "mini" / "haiku" salen mucho menos)
 2. Bajar `MEMORIA_MENSAJES`
 3. Dejar `CACHE=true` (ya viene así)
+
+En WhatsApp se suma lo de Meta: pasados los 1.000 mensajes gratis del mes,
+cada mensaje que manda el agente se paga. Ahí las palancas son
+`MENSAJES_POR_RESPUESTA=1` y el tope por conversación (`TOPE_MENSAJES_POR_DIA`).
+Para WhatsApp alcanza con `MAX_TOKENS=1024`: una respuesta de chat no necesita
+más, y lo que escribe el agente también queda en la memoria. Y poné un tope
+de gasto en la consola del proveedor del modelo: es el único freno que no
+depende del agente.
 
 **Me tira un error y no entiendo.**
 La web muestra el error tal cual viene del proveedor, sin esconderlo. Los tres
@@ -790,4 +1102,11 @@ plataforma de pruebas · Python 3.10 o más nuevo.
 
 ---
 
-Hecho por [Basdonax AI](https://basdonax.com).
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/img/logo-blanco.png">
+    <img src="docs/img/logo-negro.png" alt="Basdonax AI" width="72">
+  </picture>
+  <br>
+  Hecho por <a href="https://basdonax.com">Basdonax AI</a>
+</p>

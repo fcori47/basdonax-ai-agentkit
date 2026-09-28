@@ -16,8 +16,8 @@ las charlas de distintas personas no se mezclen:
     Telegram               →  el chat_id
     WhatsApp               →  el número de teléfono
 
-Este archivo es solo la forma. Los canales de verdad llegan en los próximos
-videos de la serie.
+Este archivo es solo la forma. Los canales de verdad están al lado:
+`telegram.py` y `chatwoot.py`.
 """
 
 from __future__ import annotations

@@ -22,8 +22,15 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from agente.avisos import Avisos  # noqa: E402
 from agente.canales.buffer import BufferDeMensajes  # noqa: E402
 from agente.canales.chatwoot import Chatwoot, _tipo_de_mensaje  # noqa: E402
+from agente.config import ErrorDeConfiguracion  # noqa: E402
+from agente.frenos import TopeDeMensajes  # noqa: E402
+from agente.web.webhook import TaparElToken, validar_token  # noqa: E402
+
+# Un token como el que genera el README: largo y al azar.
+TOKEN = "3f9a0c" * 8
 
 
 def evento(
@@ -48,7 +55,7 @@ def evento(
             "labels": [] if etiquetas is None else etiquetas,
         },
         "account": {"id": 1},
-        "inbox": {"id": 6, "name": "YT"},
+        "inbox": {"id": 1, "name": "WhatsApp"},
     }
 
 
@@ -73,11 +80,31 @@ class ChatwootFalso(Chatwoot):
         return {"id": 99}
 
     def envios(self) -> list[str]:
-        """Solo los mensajes que salieron para la persona."""
+        """Solo los mensajes que salieron para la persona (sin las notas privadas)."""
         return [
             l["datos"]["content"]
             for l in self.llamadas
-            if l["camino"].endswith("/messages") and l["datos"]
+            if l["camino"].endswith("/messages")
+            and l["datos"]
+            and not l["datos"].get("private")
+        ]
+
+    def notas(self) -> list[str]:
+        """Las notas privadas: las ve el equipo, nunca la persona."""
+        return [
+            l["datos"]["content"]
+            for l in self.llamadas
+            if l["camino"].endswith("/messages")
+            and l["datos"]
+            and l["datos"].get("private")
+        ]
+
+    def etiquetas_mandadas(self) -> list[list[str]]:
+        """Cada lista de etiquetas que se le mandó a Chatwoot."""
+        return [
+            l["datos"]["labels"]
+            for l in self.llamadas
+            if l["metodo"] == "POST" and l["camino"].endswith("/labels")
         ]
 
 
@@ -244,6 +271,57 @@ def test_sin_datos_avisa_que_faltan():
         Chatwoot(url="", token="", cuenta_id=1)
 
 
+def test_la_nota_privada_no_sale_para_la_persona():
+    """Si saliera sin `private`, el cliente leería lo que era para el equipo."""
+    canal = ChatwootFalso()
+
+    canal.nota_privada("12", "ojo con esto")
+
+    assert canal.envios() == []
+    assert canal.notas() == ["ojo con esto"]
+
+
+def test_pasar_a_persona_no_borra_las_otras_etiquetas():
+    """En Chatwoot, mandar etiquetas REEMPLAZA la lista: hay que sumar, no pisar."""
+    canal = ChatwootFalso(etiquetas_remotas=["ventas", "urgente"])
+
+    canal.pasar_a_persona("12")
+
+    assert canal.etiquetas_mandadas() == [["ventas", "urgente", "humano"]]
+
+
+def test_si_ya_la_tiene_no_la_vuelve_a_poner():
+    canal = ChatwootFalso(etiquetas_remotas=["Humano"])
+
+    canal.pasar_a_persona("12")
+
+    assert canal.etiquetas_mandadas() == []
+
+
+def test_si_no_puede_leer_las_etiquetas_no_pisa_nada(monkeypatch):
+    """Mejor no poner la etiqueta que borrarle al equipo las que puso a mano."""
+    canal = ChatwootFalso()
+
+    def falla_al_leer(metodo, camino, datos=None):
+        canal.llamadas.append({"metodo": metodo, "camino": camino, "datos": datos})
+        if metodo == "GET":
+            raise ConnectionError("Chatwoot no contesta")
+        return {}
+
+    monkeypatch.setattr(canal, "_api", falla_al_leer)
+
+    with pytest.raises(ConnectionError):
+        canal.pasar_a_persona("12")
+    assert canal.etiquetas_mandadas() == []
+
+
+def test_el_enlace_lleva_a_la_conversacion():
+    assert (
+        ChatwootFalso().enlace("55")
+        == "https://chatwoot.ejemplo.com/app/accounts/1/conversations/55"
+    )
+
+
 # -- Juntar la ráfaga ---------------------------------------------------------
 
 
@@ -347,7 +425,32 @@ async def _anotar(donde, conversacion, texto):
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
-def cliente(canal, agente, token="secreto", buffer_segundos=0):
+class AvisosFalsos(Avisos):
+    """Los avisos por mail, pero anotados en vez de mandados."""
+
+    def __init__(self, **opciones):
+        super().__init__(
+            para="duenio@ejemplo.com",
+            servidor="smtp.ejemplo.com",
+            usuario="agente@ejemplo.com",
+            clave="clave-de-aplicacion",
+            **opciones,
+        )
+        self.mandados: list[tuple[str, str]] = []
+
+    def _enviar(self, asunto, cuerpo):
+        self.mandados.append((asunto, cuerpo))
+
+
+def cliente(
+    canal,
+    agente,
+    token=TOKEN,
+    buffer_segundos=0,
+    avisos=None,
+    tope=None,
+    **ajustes,
+):
     """Levanta el webhook con las piezas de mentira adentro."""
     pytest.importorskip("httpx", reason="TestClient de FastAPI necesita httpx")
     from fastapi.testclient import TestClient
@@ -359,8 +462,30 @@ def cliente(canal, agente, token="secreto", buffer_segundos=0):
     config = agente.config
     config.chatwoot_webhook_token = token
     config.buffer_segundos = buffer_segundos
+    for nombre, valor in ajustes.items():
+        setattr(config, nombre, valor)
 
-    return TestClient(crear_app(config, agente=agente, canal=canal))
+    return TestClient(
+        crear_app(
+            config,
+            agente=agente,
+            canal=canal,
+            avisos=avisos or AvisosFalsos(),
+            tope=tope,
+        )
+    )
+
+
+def esperar(condicion, segundos=2.0):
+    """Lo que corre en segundo plano en el servidor de prueba termina solo."""
+    import time
+
+    limite = time.monotonic() + segundos
+    while time.monotonic() < limite:
+        if condicion():
+            return True
+        time.sleep(0.02)
+    return condicion()
 
 
 def test_el_mensaje_da_la_vuelta_completa():
@@ -370,7 +495,7 @@ def test_el_mensaje_da_la_vuelta_completa():
     agente = agente_falso(["¡Buenas! ¿En qué te ayudo?"])
 
     with cliente(canal, agente) as web:
-        respuesta = web.post("/chatwoot/secreto", json=evento("hola", conversacion=55))
+        respuesta = web.post(f"/chatwoot/{TOKEN}", json=evento("hola", conversacion=55))
 
     assert respuesta.status_code == 200
     assert respuesta.json()["estado"] == "recibido"
@@ -398,24 +523,181 @@ def test_su_propia_respuesta_no_dispara_otra():
     agente = agente_falso(["no debería usarse"])
 
     with cliente(canal, agente) as web:
-        respuesta = web.post("/chatwoot/secreto", json=evento(tipo="outgoing"))
+        respuesta = web.post(f"/chatwoot/{TOKEN}", json=evento(tipo="outgoing"))
 
     assert respuesta.json()["estado"] == "ignorado"
     assert canal.envios() == []
 
 
-def test_si_el_modelo_falla_se_le_avisa_a_la_persona():
-    """Un error con una persona no puede dejarla esperando en silencio."""
+def test_si_el_modelo_falla_el_cliente_no_ve_el_error():
+    """Lo que ve el que escribió nunca es un error técnico.
+
+    El error no se esconde: llega completo a la nota privada (la ve el
+    equipo) y al mail del dueño, y la conversación pasa a una persona para
+    que nadie quede esperando en silencio.
+    """
     from test_agente import agente_falso
 
     canal = ChatwootFalso()
+    avisos = AvisosFalsos()
     agente = agente_falso([])  # sin respuestas: el modelo falso revienta
 
-    with cliente(canal, agente) as web:
-        web.post("/chatwoot/secreto", json=evento("hola"))
+    with cliente(canal, agente, avisos=avisos) as web:
+        web.post(f"/chatwoot/{TOKEN}", json=evento("hola", conversacion=55))
 
-    assert len(canal.envios()) == 1
-    assert "rompió" in canal.envios()[0]
+    assert canal.envios() == [], "al cliente no le tiene que llegar nada"
+    assert len(canal.notas()) == 1
+    assert "no pude responder" in canal.notas()[0]
+    assert canal.etiquetas_mandadas() == [["humano"]]
+
+    assert len(avisos.mandados) == 1
+    asunto, cuerpo = avisos.mandados[0]
+    assert "no pudo responder" in asunto
+    assert "conversations/55" in cuerpo, "el mail lleva a la conversación"
+
+
+def test_el_mismo_error_no_manda_un_mail_por_persona():
+    """Con la clave del modelo vencida falla todo: un mail, no cien."""
+    from test_agente import agente_falso
+
+    canal = ChatwootFalso()
+    avisos = AvisosFalsos()
+    agente = agente_falso([])
+
+    with cliente(canal, agente, avisos=avisos) as web:
+        for i, conversacion in enumerate([55, 56, 57]):
+            web.post(
+                f"/chatwoot/{TOKEN}",
+                json=evento("hola", conversacion=conversacion, id_mensaje=100 + i),
+            )
+
+    assert len(avisos.mandados) == 1
+    assert len(canal.notas()) == 3, "cada conversación tiene su nota igual"
+
+
+def test_si_chatwoot_no_acepta_la_respuesta_avisa_por_mail(monkeypatch):
+    """Si falla la salida, la nota privada tampoco va a salir: queda el mail."""
+    from test_agente import agente_falso
+
+    canal = ChatwootFalso()
+    avisos = AvisosFalsos()
+
+    def explota(conversacion, mensajes):
+        raise ConnectionError("Chatwoot no contesta")
+
+    monkeypatch.setattr(canal, "enviar", explota)
+
+    with cliente(canal, agente_falso(["hola"]), avisos=avisos) as web:
+        web.post(f"/chatwoot/{TOKEN}", json=evento("hola"))
+
+    assert len(avisos.mandados) == 1
+    assert "Chatwoot no contesta" in avisos.mandados[0][1]
+    # Aunque falló el envío, se intenta igual pasarla a una persona y dejar
+    # la nota: muchas veces lo que falla es solo ese mensaje, no Chatwoot.
+    assert canal.etiquetas_mandadas() == [["humano"]]
+    assert len(canal.notas()) == 1
+
+
+# -- Cómo responde: como una persona o en un solo mensaje ---------------------
+
+
+def test_como_una_persona_manda_hasta_tres():
+    from test_agente import agente_falso
+
+    canal = ChatwootFalso()
+    respuesta = "\n\n".join(f"Parte {i}." for i in range(1, 6))
+
+    with cliente(canal, agente_falso([respuesta]), mensajes_por_respuesta=3) as web:
+        web.post(f"/chatwoot/{TOKEN}", json=evento("hola"))
+
+    assert len(canal.envios()) == 3
+    assert "Parte 5." in canal.envios()[-1], "lo que sobra va al último: no se pierde"
+
+
+def test_en_un_solo_mensaje_sale_uno():
+    """Lo que cobra Meta es por mensaje: esto es un mensaje, no tres."""
+    from test_agente import agente_falso
+
+    canal = ChatwootFalso()
+    respuesta = "Hola.\n\n¿Qué necesitás?\n\nAvisame."
+
+    with cliente(canal, agente_falso([respuesta]), mensajes_por_respuesta=1) as web:
+        web.post(f"/chatwoot/{TOKEN}", json=evento("hola"))
+
+    assert canal.envios() == [respuesta]
+
+
+# -- Los frenos ---------------------------------------------------------------
+
+
+def test_al_pasar_el_tope_pasa_a_una_persona_y_se_calla():
+    """El que se queda charlando de cualquier cosa: al tope, a una persona."""
+    from test_agente import agente_falso
+
+    canal = ChatwootFalso()
+    agente = agente_falso(["uno", "dos", "no debería usarse"])
+
+    with cliente(canal, agente, tope=TopeDeMensajes(2)) as web:
+        estados = [
+            web.post(f"/chatwoot/{TOKEN}", json=evento("hola", id_mensaje=i)).json()[
+                "estado"
+            ]
+            for i in (1, 2, 3, 4)
+        ]
+        assert esperar(lambda: canal.notas()), "tendría que haber dejado la nota"
+
+    assert estados == ["recibido", "recibido", "tope", "tope"]
+    assert canal.envios() == ["uno", "dos"]
+    assert canal.etiquetas_mandadas() == [["humano"]]
+    assert "más de 2 mensajes" in canal.notas()[0]
+
+
+def test_un_pedido_gigante_se_descarta():
+    """Medio mega ya no es un mensaje de WhatsApp."""
+    from test_agente import agente_falso
+
+    canal = ChatwootFalso()
+
+    with cliente(canal, agente_falso(["no debería usarse"])) as web:
+        respuesta = web.post(f"/chatwoot/{TOKEN}", json=evento("x" * 600_000))
+
+    assert respuesta.status_code == 413
+    assert canal.envios() == []
+
+
+def test_lo_que_entra_se_recorta_antes_de_llegar_al_modelo():
+    """Un texto pegado enorme se pagaría en este mensaje y en todos los que siguen."""
+    from test_agente import agente_falso
+
+    agente = agente_falso(["listo"])
+
+    with cliente(ChatwootFalso(), agente, largo_maximo_de_entrada=50) as web:
+        web.post(f"/chatwoot/{TOKEN}", json=evento("a" * 5000, conversacion=77))
+
+    lo_que_llego = [m for m in agente.historial("77") if m.type == "human"][0]
+    assert len(lo_que_llego.content) == 50
+
+
+def test_la_clave_no_queda_en_los_logs():
+    """uvicorn anota la dirección de cada pedido, y la del webhook lleva la clave."""
+    import logging
+
+    from agente.web.webhook import TaparElToken
+
+    registro = logging.LogRecord(
+        "uvicorn.access",
+        logging.INFO,
+        __file__,
+        1,
+        '%s - "%s %s HTTP/%s" %d',
+        ("10.0.0.1:5000", "POST", "/chatwoot/la-clave-secreta", "1.1", 200),
+        None,
+    )
+
+    TaparElToken().filter(registro)
+
+    assert "la-clave-secreta" not in registro.getMessage()
+    assert "/chatwoot/***" in registro.getMessage()
 
 
 def test_el_salud_contesta():
@@ -427,3 +709,106 @@ def test_el_salud_contesta():
 
     assert respuesta.status_code == 200
     assert respuesta.json()["estado"] == "ok"
+
+
+# -- Lo que se sumó con la auditoría -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "token",
+    ["", "corto", "un-secreto-largo-y-al-azar", "x" * 40 + "!", "con espacios" * 4],
+)
+def test_sin_token_o_con_uno_debil_no_arranca(token):
+    """Un token vacío deja al agente mudo; uno débil deja entrar a cualquiera."""
+    with pytest.raises(ErrorDeConfiguracion, match="CHATWOOT_WEBHOOK_TOKEN"):
+        validar_token(token)
+
+
+def test_un_token_largo_y_al_azar_arranca():
+    validar_token(TOKEN)  # no levanta nada
+
+
+@pytest.mark.parametrize(
+    "crudo",
+    [
+        [1, 2],
+        "hola",
+        {"event": "message_created", "content": "hola", "conversation": "12"},
+        {"event": "message_created", "content": 123, "conversation": {"id": 12}},
+        {"event": "message_created", "content": "hola", "conversation": {"id": "12; <a href>"}},
+        {"event": "message_created", "content": "hola", "conversation": {"id": True}},
+    ],
+)
+def test_un_evento_con_otra_forma_se_ignora(crudo):
+    """Lo que viene de afuera se valida: no tira el servidor ni se cuela en un mail."""
+    assert ChatwootFalso().traducir(crudo) is None
+
+
+def test_un_cuerpo_que_no_es_un_objeto_da_400():
+    from test_agente import agente_falso
+
+    with cliente(ChatwootFalso(), agente_falso(["hola"])) as web:
+        respuesta = web.post(f"/chatwoot/{TOKEN}", json=[1, 2])
+
+    assert respuesta.status_code == 400
+
+
+def test_una_respuesta_vacia_pasa_a_una_persona():
+    """Si el modelo no dice nada, la persona no puede quedarse esperando en silencio."""
+    from test_agente import agente_falso
+
+    canal = ChatwootFalso()
+    avisos = AvisosFalsos()
+
+    with cliente(canal, agente_falso([""]), avisos=avisos) as web:
+        web.post(f"/chatwoot/{TOKEN}", json=evento("hola"))
+
+    assert canal.envios() == []
+    assert canal.etiquetas_mandadas() == [["humano"]]
+    assert "vacía" in canal.notas()[0]
+    assert len(avisos.mandados) == 1
+
+
+def test_si_no_puede_poner_la_etiqueta_la_nota_no_miente(monkeypatch):
+    """La nota no puede decir «le puse la etiqueta» si no se pudo."""
+    from test_agente import agente_falso
+
+    canal = ChatwootFalso()
+
+    def falla(conversacion):
+        raise ConnectionError("Chatwoot no contesta")
+
+    monkeypatch.setattr(canal, "pasar_a_persona", falla)
+
+    with cliente(canal, agente_falso([])) as web:
+        web.post(f"/chatwoot/{TOKEN}", json=evento("hola"))
+
+    assert "No pude ponerle la etiqueta" in canal.notas()[0]
+
+
+def test_no_hay_documentacion_publica_del_webhook():
+    """/docs y /openapi.json le mostrarían a cualquiera qué rutas tiene."""
+    from test_agente import agente_falso
+
+    with cliente(ChatwootFalso(), agente_falso(["hola"])) as web:
+        assert web.get("/docs").status_code == 404
+        assert web.get("/openapi.json").status_code == 404
+
+
+@pytest.mark.parametrize(
+    "linea",
+    [
+        "POST /Chatwoot/{t} HTTP/1.1",
+        "POST /chatwoot?token={t} HTTP/1.1",
+        "POST /chatwoot//{t} HTTP/1.1",
+        "algo falló con {t} adentro",
+    ],
+)
+def test_la_clave_se_tapa_aunque_la_direccion_este_mal_escrita(linea):
+    """Una URL mal configurada en Chatwoot se reintenta sola, y cada intento se anota."""
+    import logging
+
+    registro = logging.LogRecord("uvicorn.access", logging.INFO, __file__, 1, "%s", (linea.format(t=TOKEN),), None)
+    TaparElToken(TOKEN).filter(registro)
+
+    assert TOKEN not in registro.getMessage()

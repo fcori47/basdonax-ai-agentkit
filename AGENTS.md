@@ -11,16 +11,17 @@ Si sos una persona: leé el `README.md`, es el que está escrito para vos.
 
 ## Qué es esto
 
-**AgentKit.** Un agente de IA conversacional que corre en la máquina
-del usuario. Sin servidor, sin hosting. Funciona con Claude, OpenAI o Gemini,
+**Agent Kit.** Un agente de IA conversacional que arranca en la máquina
+del usuario, sin servidor. Telegram lo atiende desde ahí; WhatsApp, desde un
+servidor, con Chatwoot en el medio. Funciona con Claude, OpenAI o Gemini,
 intercambiables desde el `.env`.
 
 Construido sobre **LangChain + LangGraph**. La memoria son los *checkpointers*
 de LangGraph, indexados por `thread_id`.
 
-Es la base de una serie: primero local (esto), después Telegram, después
-WhatsApp. Todo lo que se diseñó acá apunta a que esos dos pasos no obliguen a
-reescribir el agente.
+Se armó por etapas: primero local, después Telegram, después WhatsApp. Todo
+lo que se diseñó acá apunta a que cada etapa nueva no obligue a reescribir
+el agente.
 
 **Idioma del código: español.** Nombres de funciones, variables, comentarios,
 docstrings y mensajes de error, todo en español rioplatense (voseo: *tenés*,
@@ -42,7 +43,9 @@ Lo que importa acá es qué hace cada uno:
 | `modelos.py` | Crea el modelo y le pregunta al proveedor cuáles tiene |
 | `memoria.py` | Los checkpointers: `ram` / `sqlite` / `postgres` |
 | `prompts.py` | Lee y guarda `prompts/sistema.md` |
-| `respuesta.py` | Parte una respuesta larga en varios mensajes |
+| `respuesta.py` | Parte la respuesta en varios mensajes, o la deja en uno (`MENSAJES_POR_RESPUESTA`) |
+| `frenos.py` | El tope de mensajes por conversación y por día |
+| `avisos.py` | El mail al dueño cuando algo se rompe |
 | `consola.py` | Que la terminal de Windows no rompa con las tildes |
 | `config.py` | Lee el `.env`. Única fuente de configuración. |
 | `canales/base.py` | La forma de un canal |
@@ -53,6 +56,10 @@ Lo que importa acá es qué hace cada uno:
 | `../webhook_chatwoot.py` | El punto de entrada del webhook |
 | `../Dockerfile` | Empaqueta el **webhook** (`webhook_chatwoot.py`); el bot de Telegram queda adentro por si lo querés correr |
 | `web/app.py` | La plataforma de pruebas (FastAPI + un solo HTML) — **no es** el webhook |
+| `../probar_mail.py` | Manda un mail de prueba de los avisos. Es el último paso de la instalación |
+| `../n8n/format_chain_v4.js` | La Format Chain nueva, para el que tiene el agente en n8n y la pega a mano. **Es copia exacta** de la que usa el actualizador: un test lo cuida |
+| `../.claude/skills/actualizar-agente-whatsapp/` | El actualizador: una skill de Claude Code que adapta al cobro de Meta un agente hecho en n8n, en este kit o que todavía no existe. Sus pruebas (contra un n8n de mentira) están en `tests/actualizador/` |
+| `../docs/img/` | Las imágenes del README. Se generan aparte; no son parte del agente |
 
 ---
 
@@ -103,13 +110,21 @@ Ninguna credencial en el código, ni una. Las claves se leen únicamente en
 - **Comentar el *por qué*, no el *qué*.** Este repo es material didáctico: si
   algo se hace de una forma no obvia, explicá la razón.
 - **El error del proveedor nunca se esconde.** Si Anthropic, OpenAI o Google
-  devuelven un error, tiene que llegar tal cual a la pantalla del usuario.
-  Sí se pueden tragar fallas que no son del modelo y no deben voltear la app,
-  y hoy hay exactamente tres, todas a propósito y comentadas:
-  `listar_modelos()` (sin lista, la app sigue), `consola.preparar()` (si la
-  terminal no acepta UTF-8, se sigue igual) y `_mensajes_en_memoria()` (es un
-  contador para la pantalla). **No agregues una cuarta sin dejar el motivo
-  escrito al lado.**
+  devuelven un error, tiene que llegar tal cual a quien lo puede arreglar: en
+  la terminal y la plataforma de pruebas, a la pantalla; en WhatsApp, a la
+  nota privada de Chatwoot y al mail del dueño (`AVISOS_EMAIL`). **Al cliente
+  que escribió por WhatsApp no le llega nunca**: para él, un error técnico es
+  un negocio que no anda.
+  Sí se pueden tragar fallas que no son del modelo y no deben voltear la app.
+  Hoy son estas, todas a propósito y comentadas: `listar_modelos()` (sin
+  lista, la app sigue), `consola.preparar()` (si la terminal no acepta UTF-8,
+  se sigue igual), `_mensajes_en_memoria()` (es un contador para la pantalla),
+  `Avisos.avisar()` (un mail que no sale no puede tirar abajo al agente que
+  avisa), los pasos de `algo_se_rompio()` en `web/webhook.py` (que no se
+  pueda dejar la nota no puede impedir el mail), `Chatwoot.escribiendo()`
+  (el «escribiendo…» es cosmético) y `Chatwoot._etiquetas_de()` (si no se
+  pueden leer, se responde igual). **No agregues otra sin dejar
+  el motivo escrito al lado.**
 - **Los tests no gastan tokens.** Usan `GenericFakeChatModel`. Si agregás una
   función que llama a un proveedor, el test va con modelo falso.
 - **Sin dependencias nuevas** salvo que resuelvan algo que no se puede hacer
@@ -155,6 +170,105 @@ pytest
 No hay `pyproject.toml`: el paquete no se instala. Cada punto de entrada y
 cada test hace `sys.path.insert(0, "src")`, así que `pytest` se corre desde la
 raíz del repo y no desde otro lado.
+
+---
+
+## Al instalar: cuatro preguntas antes de desplegar
+
+Si te piden instalarlo o desplegarlo para WhatsApp, **preguntale estas cuatro
+cosas a la persona antes de completar el `.env`**. Son decisiones de su
+negocio: no las llenes con el valor por defecto. Explicale cada una en
+palabras simples, sin jerga, y recién después escribí la respuesta. Si algo
+no lo tiene hecho, **guialo paso a paso hasta que quede hecho**: no le
+dejes la tarea para después.
+
+**1. ¿Querés que responda como una persona, en varios mensajes cortos, o todo
+en un solo mensaje?** → `MENSAJES_POR_RESPUESTA` (va de `1` a `5`; lo
+habitual es `3` o `1`)
+
+Contale esto antes de que elija: desde el 1 de octubre de 2026, Meta cobra
+los mensajes que manda el agente, pasados los 1.000 gratis de cada mes (por
+número). Tres mensajes cortos se leen como una persona, pero son hasta tres
+mensajes cobrados. Si la mayoría de la gente le llega por anuncios de clic a
+WhatsApp y escribe desde el celular, esas conversaciones son gratis durante
+72 horas desde la primera respuesta y la diferencia casi no se siente; donde
+pesa es en lo que entra directo.
+
+**2. ¿Tenés una tarjeta cargada en tu cuenta de WhatsApp de Meta?**
+
+Contale por qué importa: sin tarjeta, pasados los 1.000 mensajes gratis del
+mes, Meta deja de entregar lo que manda el agente, y el agente no se entera
+(Chatwoot ya había aceptado el mensaje): no sale ningún aviso. Si no la
+tiene, guialo con los pasos de la ayuda oficial de Meta (artículo «Añadir
+una tarjeta de crédito a una cuenta de la plataforma de WhatsApp Business»):
+
+1. Entrá al administrador de WhatsApp: https://business.facebook.com/wa/manage/home/
+2. En la página de información general, buscá la cuenta y hacé clic en los
+   tres puntos.
+3. **Administrar la configuración de la cuenta** → pestaña **Configuración**
+   → **Configuración de pago**.
+4. **Añadir método de pago**, completá los datos de pago → **Siguiente**.
+5. Los datos de la tarjeta → **Guardar**. Los datos de la empresa → **Guardar**.
+
+Meta está cambiando esta parte: la versión en inglés del mismo artículo ya
+muestra otro camino, **Meta Business Suite → Configuración → la sección de
+pagos (*Billing & payments*) → cuentas de mensajería (*Messaging accounts*)
+→ Añadir método de pago**. Si no encuentra «Configuración de pago», probá por
+ahí; si tampoco está, le falta el permiso: tiene que pedírselo al dueño del
+portfolio comercial.
+
+Hace falta permiso para administrar los pagos de esa cuenta (el dueño ya lo
+tiene) y una tarjeta de crédito Visa o Mastercard: no aceptan American
+Express ni PayPal. Al terminar, que te confirme que la tarjeta aparece en la
+pestaña **Configuración**.
+
+**3. ¿Cuántos mensajes de una misma persona atiende por día?** →
+`TOPE_MENSAJES_POR_DIA`
+
+Contale: hay gente que se queda charlando de cualquier cosa con el agente, y
+cada respuesta se paga. Cuentan los mensajes que manda la persona en esa
+conversación, en 24 horas (no las respuestas: tres mensajes seguidos cuentan
+tres). Al pasar el tope, el agente le pone la etiqueta `humano` a esa
+conversación y deja una nota privada. **La etiqueta no se va sola**: vuelve a
+contestar cuando alguien del equipo se la saca. Si no sabe qué poner, 50. `0`
+es sin tope. Recomendale además un tope de gasto en la consola del proveedor
+del modelo: es el único freno que no depende del agente.
+
+**4. ¿A qué mail te aviso si algo se rompe?** → `AVISOS_EMAIL` y `SMTP_*`
+
+Contale: si falla el modelo o Chatwoot no acepta la respuesta, la persona
+que escribió no ve ningún error; la conversación pasa a `humano`, queda una
+nota privada y a él le llega un mail (de un mismo error, uno por hora como
+mucho). Para mandarlo hace falta una cuenta que mande. Con Gmail, guialo así:
+
+1. Que active la verificación en dos pasos, si no la tiene: en la seguridad
+   de su cuenta (https://myaccount.google.com/security), la opción
+   «Verificación en 2 pasos». Sin eso, Google no deja crear el paso 2.
+2. Que cree una contraseña de aplicación en
+   https://myaccount.google.com/apppasswords (el nombre da igual, por
+   ejemplo «agente»). Google le muestra 16 letras: esa es `SMTP_CLAVE` (los
+   espacios no importan). **No es su contraseña de siempre**, y no hace falta
+   crear nada en Google Cloud.
+3. `SMTP_SERVIDOR=smtp.gmail.com`, `SMTP_PUERTO=587`,
+   `SMTP_USUARIO` = esa cuenta de Gmail, `AVISOS_EMAIL` = a quién le llega.
+4. **La prueba se hace donde corre el agente**: ya desplegado, en la terminal
+   del contenedor (en Coolify, la terminal de la aplicación; con Docker,
+   `docker exec agente python probar_mail.py`). Preguntale si le llegó (que
+   mire también en correo no deseado). Probarlo solo en su computadora no
+   prueba que el servidor pueda mandar mails. **No des la instalación por
+   terminada sin ese mail.**
+
+Si su cuenta es de empresa (Google Workspace), usa solo llaves de seguridad
+o tiene la Protección avanzada, Google no le deja crear contraseñas de
+aplicación: sirve una cuenta de Gmail común solo para los avisos, o el
+servidor de mail de su dominio. Avisale también que si algún día cambia la
+contraseña de esa cuenta, Google borra las contraseñas de aplicación: hay que
+crear otra y volver a probar. Si no quiere avisos, `AVISOS_EMAIL` vacío: todo
+lo demás anda igual.
+
+**En el servidor van todas las variables**: las de Chatwoot y las de estas
+cuatro decisiones (en Coolify, *Environment Variables* de la aplicación). La
+lista completa está en el README, en «Con Coolify».
 
 ---
 
@@ -252,7 +366,7 @@ Cosas que parecen bugs y no lo son, o que cuestan de encontrar:
 
 ## Lo que NO tiene (todavía)
 
-No lo agregues salvo que te lo pidan: son los próximos videos de la serie.
+No lo agregues salvo que te lo pidan: son las próximas etapas.
 
 - Más herramientas (hay una sola: el clima)
 - RAG / base de conocimiento
@@ -348,13 +462,13 @@ Esto todavía **no está implementado** y no hay que implementarlo sin que lo
 pidan. Está acá para que cualquier cosa que se agregue al núcleo no lo haga
 imposible después.
 
-**Video 2 — Telegram. ✅ Hecho.** `canales/telegram.py` implementa `Canal`,
+**Etapa 2 — Telegram. ✅ Hecha.** `canales/telegram.py` implementa `Canal`,
 `conversacion` = el `chat_id`, y el bucle que las pega está en
 `bot_telegram.py` (raíz). Anda por *polling*, así que corre en la máquina de
 uno sin dominio ni puertos abiertos. Sirve igual con `MODO=test` (SQLite) que
 con `MODO=produccion` (Postgres): el agente no cambia.
 
-**Video 3 — WhatsApp. ✅ Hecho, con Chatwoot en el medio.**
+**Etapa 3 — WhatsApp. ✅ Hecha, con Chatwoot en el medio.**
 
 El agente **no le habla a Meta**: le habla a Chatwoot, que ya está conectado
 a WhatsApp. Eso cambia el diseño respecto de lo que decía este archivo antes,
@@ -371,8 +485,14 @@ y para mejor: la mitad de las piezas las resuelve Chatwoot.
 | Descartar el mensaje repetido por id | `Chatwoot.deberia_responder()` | Cola de los últimos 1.000 ids |
 | **Que el agente no se conteste a sí mismo** | `Chatwoot.deberia_responder()` | Solo se atiende `message_type == "incoming"`. Sin esto es un ida y vuelta infinito que gasta tokens en cada vuelta |
 | Juntar la ráfaga de mensajes | `canales/buffer.py` | En memoria, no Redis: hay un solo proceso atendiendo. `BUFFER_SEGUNDOS` |
-| Partir la respuesta en varios globos | `respuesta.partir_respuesta()` | Ya estaba |
+| Partir la respuesta en varios globos | `respuesta.partir_respuesta()` | `MENSAJES_POR_RESPUESTA`: `3` como una persona, `1` todo junto. Meta cobra por mensaje desde el 1/10/2026. Ningún globo pasa los 4.096 caracteres de WhatsApp |
 | Traspaso a una persona | `Chatwoot.deberia_responder()` | La etiqueta `CHATWOOT_ETIQUETA_HUMANO` apaga al bot en esa conversación, con un clic desde la bandeja |
+| Si el modelo o Chatwoot fallan | `web/webhook.py` → `algo_se_rompio()` | Nada al cliente: etiqueta `humano` (primero, y la nota dice si se pudo), nota privada con el error y mail al dueño (`avisos.py`), uno por hora por tipo de error. Una respuesta vacía del modelo cuenta como falla |
+| El que charla de más | `frenos.TopeDeMensajes` | `TOPE_MENSAJES_POR_DIA`: al pasarlo, etiqueta `humano` + nota privada. Poner la etiqueta **suma** a las que ya había: en Chatwoot, mandar etiquetas reemplaza la lista |
+| Textos pegados enormes | `web/webhook.py` | Se recortan a `LARGO_MAXIMO_DE_ENTRADA` antes del modelo: quedan en la memoria y se pagarían en cada mensaje |
+| La clave en los registros | `web/webhook.TaparElToken` | uvicorn anota la dirección de cada pedido, y la del webhook lleva la clave: se tapa el valor exacto en todos los registros (también en una dirección mal escrita), y además cualquier `/chatwoot/<algo>` |
+| Lo que llega con otra forma | `Chatwoot.traducir()` | Un evento que no es un objeto, un contenido que no es texto o un id de conversación con letras se ignoran: no tiran el servidor ni se cuelan en un mail |
+| Pedidos gigantes y claves débiles | `web/webhook.py` | Más de 512 KB se corta leyendo de a pedazos. El token tiene que tener 32 caracteres o más: si falta, es corto o es el del ejemplo, el servidor no arranca (`validar_token()`). **No se bloquea por dirección**: detrás de Coolify todos llegan con la del proxy y se bloquearía al propio Chatwoot |
 | Notas privadas | `Chatwoot.deberia_responder()` | Son para el equipo: el agente no las contesta |
 | Ventana de 24h y plantillas | Lo maneja Chatwoot | Por eso no está acá |
 
@@ -391,8 +511,6 @@ necesita para contestar: sirve para las dos cosas.
   procesos, y hoy hay uno solo atendiendo. Sumar una base entera para eso era
   pagar un problema que todavía no tenemos. Cuando se escale a varios
   procesos se cambia esa clase y el webhook ni se entera.
-- **`MODO=test` responde y listo.** Todo lo de arriba corre solo en
-  `MODO=produccion`.
 
 **Ya preparado en el núcleo para que eso entre sin reescribir nada:**
 

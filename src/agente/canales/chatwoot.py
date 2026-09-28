@@ -45,6 +45,24 @@ class ErrorDeChatwoot(Exception):
     """Chatwoot contestó algo que no esperábamos."""
 
 
+class _SinRedirecciones(urllib.request.HTTPRedirectHandler):
+    """Una redirección se corta en vez de seguirse.
+
+    urllib la seguiría reenviando la cabecera con el token de Chatwoot, a
+    cualquier servidor. Chatwoot no redirige su API: si pasa, CHATWOOT_URL
+    está mal y conviene enterarse.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise ErrorDeChatwoot(
+            f"Chatwoot contestó con una redirección ({code}). No la sigo, para no "
+            "mandarle el token a otro lado: revisá CHATWOOT_URL."
+        )
+
+
+_ABRIDOR = urllib.request.build_opener(_SinRedirecciones)
+
+
 class Chatwoot(Canal):
     """La bandeja de Chatwoot: por acá entran y salen los mensajes."""
 
@@ -83,14 +101,22 @@ class Chatwoot(Canal):
         otro tipo de evento, o un mensaje sin texto (un audio, una foto, un
         adjunto suelto) que el agente todavía no sabe leer.
         """
-        if evento.get("event") != "message_created":
+        # Lo que llega de afuera se valida antes de usarlo: un evento con otra
+        # forma (una lista, un texto, un id con letras) no puede tirar el
+        # servidor ni colarse en un mail o en un enlace.
+        if not isinstance(evento, dict) or evento.get("event") != "message_created":
             return None
 
-        conversacion = evento.get("conversation") or {}
+        conversacion = evento.get("conversation")
+        if not isinstance(conversacion, dict):
+            return None
         id_conversacion = conversacion.get("id")
-        texto = (evento.get("content") or "").strip()
+        if isinstance(id_conversacion, bool) or not str(id_conversacion or "").isdigit():
+            return None
 
-        if not id_conversacion or not texto:
+        contenido = evento.get("content")
+        texto = contenido.strip() if isinstance(contenido, str) else ""
+        if not texto:
             return None
 
         return MensajeEntrante(
@@ -195,6 +221,49 @@ class Chatwoot(Canal):
                 {"content": texto, "message_type": "outgoing"},
             )
 
+    def nota_privada(self, conversacion: str, texto: str) -> None:
+        """Una nota que ve el equipo en la bandeja y nunca le llega al cliente.
+
+        Es donde va lo que el agente le tiene que contar al equipo: un error,
+        por qué dejó de contestar. Vuelve por el webhook como un evento más,
+        pero marcada como privada, así que el agente no la contesta.
+        """
+        self._api(
+            "POST",
+            f"conversations/{conversacion}/messages",
+            {"content": texto, "message_type": "outgoing", "private": True},
+        )
+
+    def pasar_a_persona(self, conversacion: str) -> None:
+        """Le pone la etiqueta del traspaso: el agente se calla en esa conversación.
+
+        Ojo con esto, que borra datos si se hace mal: en Chatwoot, mandar las
+        etiquetas REEMPLAZA la lista entera. Si mandáramos solo `humano`, se
+        irían las que ya tenía (ventas, urgente, lo que sea). Por eso primero
+        se leen y después se suman.
+
+        Y si no se pueden leer, no se sigue: mejor no poner la etiqueta que
+        borrarle al equipo las que puso a mano.
+        """
+        if not self.etiqueta_humano:
+            return
+
+        respuesta = self._api("GET", f"conversations/{conversacion}/labels")
+        etiquetas = [str(e) for e in respuesta.get("payload") or []]
+
+        if self.etiqueta_humano in {e.strip().lower() for e in etiquetas}:
+            return
+
+        self._api(
+            "POST",
+            f"conversations/{conversacion}/labels",
+            {"labels": etiquetas + [self.etiqueta_humano]},
+        )
+
+    def enlace(self, conversacion: str) -> str:
+        """La dirección de la conversación en la bandeja. Va en los avisos por mail."""
+        return f"{self.url}/app/accounts/{self.cuenta_id}/conversations/{conversacion}"
+
     def escribiendo(self, conversacion: str, encendido: bool = True) -> None:
         """El "escribiendo..." mientras el modelo piensa.
 
@@ -233,7 +302,7 @@ class Chatwoot(Canal):
         )
 
         try:
-            with urllib.request.urlopen(pedido, timeout=ESPERA_DE_RED) as respuesta:
+            with _ABRIDOR.open(pedido, timeout=ESPERA_DE_RED) as respuesta:
                 cuerpo = respuesta.read().decode("utf-8")
         except urllib.error.HTTPError as e:
             # El cuerpo del error es lo único que dice qué pasó de verdad
